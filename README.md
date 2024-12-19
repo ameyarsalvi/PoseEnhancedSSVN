@@ -86,4 +86,9 @@ python3 baseEval.py
 ```
 ![Bsln5k-ezgif com-video-to-gif-converter](https://github.com/user-attachments/assets/4a580fab-f608-4182-a1eb-81406a5b0bde)
 
+### Deployment
+
+Deploying the policy on the hardware required configuring the user hardware (associated ROS messages, libraries, etc.). Yet, an example deployment file has been provided in the /deployment directory. Ensure all the assoicated libraries and modules are available. Also ensure to change the namespaces of the ROS messages for the camera images and command velocities.
+
+![PoseEnhancedVN_p2-ezgif com-video-to-gif-converter (2)](https://github.com/user-attachments/assets/f4629d28-0086-482b-b52e-7044b097818f)
 
