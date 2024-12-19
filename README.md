@@ -84,10 +84,3 @@ model_path = '/home/asalvi/code_workspace/Husky_CS_SB3/Evaluation/EvalDump/Bsln/
 ```
 python3 baseEval.py
 ```
-
-## Implementation Details
-
-### Course Generation
-
-
-### Path parameterization
