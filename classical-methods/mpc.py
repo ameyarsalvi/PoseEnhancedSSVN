@@ -17,6 +17,139 @@ from Image2Waypoints import Image2Waypoints
 from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 
 
+import casadi as ca
+
+
+from scipy.interpolate import interp1d
+
+def interpolate_waypoints_to_horizon(waypoints_meters, N):
+    """Interpolate waypoints to get evenly spaced reference for NMPC."""
+    x_path = waypoints_meters[:, 0]
+    y_path = waypoints_meters[:, 1]
+
+    # Compute cumulative distances along the path
+    distances = np.insert(np.cumsum(np.linalg.norm(np.diff(waypoints_meters, axis=0), axis=1)), 0, 0)
+    total_length = distances[-1]
+
+    # Create interpolators
+    fx = interp1d(distances, x_path, kind='linear', fill_value='extrapolate')
+    fy = interp1d(distances, y_path, kind='linear', fill_value='extrapolate')
+
+    # Interpolate along arc-length
+    interp_dists = np.linspace(0, total_length, N + 1)
+    x_ref = fx(interp_dists)
+    y_ref = fy(interp_dists)
+
+    # Approximate heading (theta) using gradient
+    dx = np.gradient(x_ref)
+    dy = np.gradient(y_ref)
+    theta_ref = np.arctan2(dy, dx)
+
+    return np.vstack([x_ref, y_ref, theta_ref])  # shape: (3, N+1)
+
+
+
+import casadi as ca
+
+def create_nmpc_solver(N=10, dt=0.05,
+                       Q_weights=[0.1, 0.1, 0.05],
+                       R_weights=[0.1, 0.1],
+                       v_des=0.75,
+                       alpha=0.01):
+    """
+    Creates a nonlinear MPC solver for a differential drive robot using CasADi,
+    including soft tracking of a desired linear velocity.
+
+    Parameters:
+        N : int
+            Horizon length.
+        dt : float
+            Timestep (s).
+        Q_weights : list of 3 floats
+            State cost weights [x, y, theta].
+        R_weights : list of 2 floats
+            Control cost weights [v, omega].
+        v_des : float
+            Desired linear velocity (m/s).
+        alpha : float
+            Penalty weight on velocity tracking (soft constraint).
+
+    Returns:
+        solver : CasADi solver object
+        solver_vars : dict with 'X', 'U', 'X_ref', and dimensions
+    """
+
+    # Symbolic variables
+    x = ca.SX.sym('x')
+    y = ca.SX.sym('y')
+    theta = ca.SX.sym('theta')
+    v = ca.SX.sym('v')
+    omega = ca.SX.sym('omega')
+
+    states = ca.vertcat(x, y, theta)
+    controls = ca.vertcat(v, omega)
+
+    # Dynamics
+    rhs = ca.vertcat(
+        v * ca.cos(theta),
+        v * ca.sin(theta),
+        omega
+    )
+    f = ca.Function('f', [states, controls], [rhs])
+
+    # Optimization variables
+    X = ca.SX.sym('X', 3, N+1)
+    U = ca.SX.sym('U', 2, N)
+    X_ref = ca.SX.sym('X_ref', 3, N+1)
+
+    # Cost function weights
+    Q = ca.diag(ca.SX(Q_weights))
+    R = ca.diag(ca.SX(R_weights))
+
+    # Objective and constraints
+    obj = 0
+    g = []
+
+    g.append(X[:, 0] - X_ref[:, 0])  # initial constraint
+
+    for k in range(N):
+        x_next = X[:, k] + dt * f(X[:, k], U[:, k])
+        g.append(X[:, k+1] - x_next)
+
+        # Path tracking cost
+        obj += ca.mtimes([(X[:, k] - X_ref[:, k]).T, Q, (X[:, k] - X_ref[:, k])])
+        obj += ca.mtimes([U[:, k].T, R, U[:, k]])
+
+        # Soft velocity tracking penalty on v
+        obj += alpha * (U[0, k] - v_des) ** 2
+
+    g = ca.vertcat(*g)
+
+    # Flatten decision variables
+    decision_vars = ca.vertcat(ca.reshape(X, -1, 1), ca.reshape(U, -1, 1))
+    params = ca.reshape(X_ref, -1, 1)
+
+    # Solver setup
+    nlp = {'x': decision_vars, 'f': obj, 'g': g, 'p': params}
+    opts = {"ipopt.print_level": 0, "print_time": 0}
+
+    solver = ca.nlpsol('solver', 'ipopt', nlp, opts)
+
+    # Return solver and useful handles
+    solver_vars = {
+        'X': X,
+        'U': U,
+        'X_ref': X_ref,
+        'N': N,
+        'dt': dt,
+        'n_states': 3,
+        'n_controls': 2
+    }
+
+    return solver, solver_vars
+
+
+
 ## Variable initialization
 sim_time = []
 
@@ -81,7 +214,43 @@ while (t:= sim.getSimulationTime()) < 600:
     )
 
 
-    
+    # --- Step 2: Setup NMPC and Interpolate Waypoints ---
+    solver, vars = create_nmpc_solver(N=10, dt=0.05)
+    X_ref_np = interpolate_waypoints_to_horizon(waypoints_meters, N=vars['N'])
+    X_ref_flat = X_ref_np.reshape((-1, 1))
+
+    # Initial guess and state
+    x0 = np.array([0.0, 0.0, 0.0])
+    X_init = np.tile(x0.reshape(3, 1), (1, vars['N']+1))
+    U_init = np.zeros((2, vars['N']))
+    initial_guess = np.concatenate([X_init.reshape(-1, 1), U_init.reshape(-1, 1)], axis=0)
+
+    # --- Step 3: Solve NMPC and Get Control ---
+    sol = solver(x0=initial_guess, p=X_ref_flat, lbg=0, ubg=0)
+    solution = sol['x'].full().flatten()
+    U_opt = solution[3 * (vars['N']+1):].reshape((2, vars['N']))
+    v_cmd, omega_cmd = U_opt[:, 0]
+
+    print(f"Apply: v = {v_cmd:.3f}, omega = {omega_cmd:.3f}")
+
+
+    #### set wheel velocities
+
+    t_a = 0.0770 # Virtual Radius
+    t_b = 0.0870 #Virtual Radius/ Virtual Trackwidth
+        
+    A = np.array([[t_a,t_a],[-t_b,t_b]])
+
+    velocity = np.array([v_cmd,omega_cmd])
+    phi_dots = np.matmul(inv(A),velocity) #Inverse Kinematics
+    phi_dots = phi_dots.astype(float)
+    Left = phi_dots[0].item()
+    Right = phi_dots[1].item()
+
+    sim.setJointTargetVelocity(fl_w, Left)
+    sim.setJointTargetVelocity(fr_w, Right)
+    sim.setJointTargetVelocity(rl_w, Left)
+    sim.setJointTargetVelocity(rr_w, Right)   
 
     '''
     import matplotlib.pyplot as plt
