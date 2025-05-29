@@ -1,0 +1,13 @@
+{
+    "args": [
+      {
+        "env_registration_dir": "/home/asalvi/code_workspace/Husky_CS_SB3/train/HuskyCP-gym",
+        "paths_dir": "/home/asalvi/code_workspace/Husky_CS_SB3/PoseEnhancedVN/train/MixPathFlip/",
+        "variant": "test",
+        "tensor_logs": "/home/asalvi/code_workspace/tmp/sb3_log/VisServo/test/",
+        "log_options": 0,
+        "eval_dir": "/home/asalvi/code_workspace/Husky_CS_SB3/Evaluation/Policies/expTrt/expDump/expDumpAll/"
+      }
+    ]
+  }
+  
