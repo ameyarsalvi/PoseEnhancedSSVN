@@ -177,7 +177,6 @@ sim.setInt32Param(sim.intparam_idle_fps, 0)
 # Run a simulation in stepping mode:
 client.setStepping(True)
 sim.startSimulation()
-client.step()  
 
 def process_img(img):
     img = np.frombuffer(img, dtype=np.uint8).reshape(resY, resX, 3)

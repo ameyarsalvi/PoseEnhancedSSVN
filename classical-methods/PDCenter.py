@@ -10,11 +10,58 @@ import cv2
 import matplotlib.pyplot as plt
 from numpy import savetxt
 from numpy.linalg import inv
-#from matplotlib.animation import FuncAnimation
-
 from Image2Waypoints import Image2Waypoints
-
 from coppeliasim_zmqremoteapi_client import RemoteAPIClient
+from scipy.spatial.transform import Rotation
+from numpy import genfromtxt
+
+#### Parse for logging arguments
+
+import argparse
+parser = argparse.ArgumentParser(description='Evaluation Logging Arguments')
+parser.add_argument('--eval_log', type=bool, default= False, help='Should evaluation and logging be enabled')
+parser.add_argument('--save_path', type=str, default= None, help='Directory to log evaluations')
+
+args = parser.parse_args()
+eval_log = args.eval_log
+save_path = args.save_path
+
+
+########## Controller specific functions
+
+def getBodyVel(sim,COM):
+    linear_vel, angular_vel = sim.getVelocity(COM)
+    sRb = sim.getObjectMatrix(COM,sim.handle_world)
+    Rot = np.array([[sRb[0],sRb[1],sRb[2]],[sRb[4],sRb[5],sRb[6]],[sRb[8],sRb[9],sRb[10]]])
+    vel_body = np.matmul(np.transpose(Rot),np.array([[linear_vel[0]],[linear_vel[1]],[linear_vel[2]]]))
+    realized_vel = np.abs(-1*vel_body[2].item())
+    return realized_vel
+
+
+def getReset():
+    Reset = []
+    path_loc = '/home/asalvi/code_workspace/Husky_CS_SB3/PoseEnhancedVN/train/MixPathFlip/'
+    
+    filenames = [
+        'ArcPath1.csv', 'ArcPath2.csv', 'ArcPath3.csv', 'ArcPath4.csv', 'ArcPath5.csv',
+        'ArcPath1_.csv', 'ArcPath2_.csv', 'ArcPath3_.csv', 'ArcPath4_.csv', 'ArcPath5_.csv'
+    ]
+    
+    for fname in filenames:
+        path = genfromtxt(path_loc + fname, delimiter=',')
+        if path.ndim == 1:
+            path = path[np.newaxis, :]  # handle single-line case
+
+        yaw = path[0, 2]
+        rot = Rotation.from_euler('xyz', [0, 0, yaw], degrees=False)
+        rot_quat = rot.as_quat()  # [x, y, z, w]
+
+        position = [path[0, 0], path[0, 1], 0.325,
+                    rot_quat[0], rot_quat[1], rot_quat[2], rot_quat[3]]
+        Reset.append(position)
+
+    return Reset
+
 
 def find_lookahead_point(path, L):
     """
@@ -89,13 +136,7 @@ def compute_lateral_offset_error(im_bw):
 
     return error
 
-
-
-
-## Variable initialization
-sim_time = []
-
-
+################### Standard variable initialization#############
 print('Program started')
 
 
@@ -108,76 +149,126 @@ fr_w = sim.getObject('/frw')
 rr_w = sim.getObject('/rrw')
 rl_w = sim.getObject('/rlw')
 IMU = sim.getObject('/Accelerometer_forceSensor')
-#COM = sim.getObject('/Husky/ReferenceFrame')
 COM = sim.getObject('/Husky/Accelerometer/Accelerometer_mass')
 Husky_ref = sim.getObject('/Husky')
-
+BodyFOR = sim.getObject('/FORBody')
+HuskyPos = sim.getObject('/FORBody/Husky/ReferenceFrame')
 
 defaultIdleFps = sim.getInt32Param(sim.intparam_idle_fps)
 sim.setInt32Param(sim.intparam_idle_fps, 0)
-
 # Run a simulation in stepping mode:
 client.setStepping(True)
 sim.startSimulation()
+client.step()  
 
-error_old = 0
-
-
-while (t:= sim.getSimulationTime()) < 600:
+##################### Evaluation /logging check ###############
+## via argparser, default = 0
+reset = getReset()
+print(reset)
+if eval_log == True:
+    log_vars = {
+        'time' : [],
+        'pose_X' : [],
+        'pose_Y' : [],
+        'linear_v' : [],
+    }
+else:
+    reset = reset[0]
+    log_vars = None
     
-    img, resX, resY = sim.getVisionSensorCharImage(visionSensorHandle)
-    im_bw = process_img(img)
-    im_bw = cv2.bitwise_not(im_bw)
-    cv2.imshow('bw image',im_bw)
-    cv2.waitKey(1)
 
-    error = compute_lateral_offset_error(im_bw)
-    error_der = (error- error_old)/0.05
-    error_old = error
-    #print(f"Lateral offset error: {error:.2f} pixels")
-    omega_cmd = -0.005*error - 0.001*error_der
+for loc_counter, location in enumerate(reset):
+    print(location)
+    
+    #reset location (for a sequence of 10 location)
+    sim.stopSimulation()
+    while sim.getSimulationState() != sim.simulation_stopped:
+        time.sleep(0.1)
+    sim.setStepping(True)
+    sim.startSimulation() 
+    sim.setObjectPose(BodyFOR, location, sim.handle_world)
+      
 
-    v_cmd = 0.75
-    #omega_cmd = 0.0
-    #### set wheel velocities
+    ######### PD Controller initializtions ############
+    sim_time = []
+    error_old = 0
 
-    t_a = 0.0770 # Virtual Radius
-    t_b = 0.0870 #Virtual Radius/ Virtual Trackwidth
+    ########### control loop ###########
+
+
+    while (t:= sim.getSimulationTime()) < 30:
         
-    A = np.array([[t_a,t_a],[-t_b,t_b]])
+        img, resX, resY = sim.getVisionSensorCharImage(visionSensorHandle)
+        im_bw = process_img(img)
+        im_bw = cv2.bitwise_not(im_bw)
+        cv2.imshow('bw image',im_bw)
+        cv2.waitKey(1)
 
-    velocity = np.array([v_cmd,omega_cmd])
-    phi_dots = np.matmul(inv(A),velocity) #Inverse Kinematics
-    phi_dots = phi_dots.astype(float)
-    Left = phi_dots[0].item()
-    Right = phi_dots[1].item()
+        error = compute_lateral_offset_error(im_bw)
+        error_der = (error- error_old)/0.05
+        error_old = error
+        #print(f"Lateral offset error: {error:.2f} pixels")
+        omega_cmd = -0.005*error - 0.001*error_der
 
-    sim.setJointTargetVelocity(fl_w, Left)
-    sim.setJointTargetVelocity(fr_w, Right)
-    sim.setJointTargetVelocity(rl_w, Left)
-    sim.setJointTargetVelocity(rr_w, Right)   
+        v_cmd = 0.75
+        #omega_cmd = 0.0
+        #### set wheel velocities
 
-    '''
-    import matplotlib.pyplot as plt
+        t_a = 0.0770 # Virtual Radius
+        t_b = 0.0870 #Virtual Radius/ Virtual Trackwidth
+            
+        A = np.array([[t_a,t_a],[-t_b,t_b]])
 
-    plt.figure()
-    plt.plot(waypoints_meters[:, 0], waypoints_meters[:, 1], 'bo-', label="Waypoints (m)")
-    plt.xlabel("Lateral offset (m)")
-    plt.ylabel("Forward distance (m)")
-    plt.title("Waypoints in Robot Frame")
-    plt.grid(True)
-    plt.axis("equal")
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-    '''
+        velocity = np.array([v_cmd,omega_cmd])
+        phi_dots = np.matmul(inv(A),velocity) #Inverse Kinematics
+        phi_dots = phi_dots.astype(float)
+        Left = phi_dots[0].item()
+        Right = phi_dots[1].item()
+
+        sim.setJointTargetVelocity(fl_w, Left)
+        sim.setJointTargetVelocity(fr_w, Right)
+        sim.setJointTargetVelocity(rl_w, Left)
+        sim.setJointTargetVelocity(rr_w, Right)   
+
+
+        linear_v = getBodyVel(sim,COM)
+        pose = sim.getObjectPose(HuskyPos, sim.handle_world)
+
+        #Log variables
+        log_vars['linear_v'].append(linear_v)
+        log_vars['pose_X'].append(pose[0])
+        log_vars['pose_Y'].append(pose[1])
+        log_vars['time'].append(t)
+
+        sim_time.append(t)
+        print(t)
+
+        client.step()  # triggers next simulation step
+
+    ######### save CSV of logged vairables ################
+    #default save_path = None
+    if save_path != None:
+        import pandas as pd
+
+        df_log = pd.DataFrame(log_vars)
+        df_log.to_csv(f"{save_path}PD_{loc_counter}.csv", index=False)
+        print(f"{loc_counter}_Log saved to csv")
     
+    
+sim.stopSimulation()   
+print('Program ended')
 
-    sim_time.append(t)
-    print(t)
+'''
+        import matplotlib.pyplot as plt
 
-    client.step()  # triggers next simulation step
-
-
-
-sim.stopSimulation()
+        plt.figure()
+        plt.plot(waypoints_meters[:, 0], waypoints_meters[:, 1], 'bo-', label="Waypoints (m)")
+        plt.xlabel("Lateral offset (m)")
+        plt.ylabel("Forward distance (m)")
+        plt.title("Waypoints in Robot Frame")
+        plt.grid(True)
+        plt.axis("equal")
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+'''
