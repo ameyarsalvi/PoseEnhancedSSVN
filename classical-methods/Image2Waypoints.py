@@ -61,6 +61,55 @@ class Image2Waypoints():
 
         return homo
     
+    def refine_binary_with_fitted_curve(im_bw):
+        """
+        Detects all blob pixels, fits a smooth curve through them,
+        and returns a refined binary image with only the curve drawn in white.
+
+        Args:
+            im_bw (np.ndarray): Original binary image (uint8, shape HxW)
+
+        Returns:
+            np.ndarray: Refined binary image with smooth path curve drawn
+        """
+        # Step 1: Invert image to detect dark blobs
+        _, binary = cv2.threshold(im_bw, 125, 255, cv2.THRESH_BINARY_INV)
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+
+        # Step 2: Collect all points from all contours
+        all_points = []
+        for cnt in contours:
+            if len(cnt) >= 5:  # skip very small/noisy contours
+                all_points.extend(cnt.reshape(-1, 2))  # (N, 2)
+
+        if len(all_points) < 5:
+            print("[Refine] Not enough points to fit a curve.")
+            return im_bw
+
+        points = np.array(all_points)
+        # Sort by y (from bottom to top of image)
+        points = points[np.argsort(points[:, 1])]
+
+        # Step 3: Fit smooth polynomial (e.g., degree-2 or 3)
+        X = points[:, 1].reshape(-1, 1)  # y as independent variable
+        y = points[:, 0]                 # x as dependent variable
+
+        poly_model = make_pipeline(PolynomialFeatures(degree=2), RANSACRegressor())
+        poly_model.fit(X, y)
+        x_fit = poly_model.predict(X)
+
+        # Step 4: Generate curve points
+        fitted_curve = np.column_stack((x_fit.astype(np.int32), X.flatten().astype(np.int32)))
+
+        # Step 5: Create new blank image and draw curve
+        refined = np.zeros_like(im_bw)
+        for pt in fitted_curve:
+            x, y = pt
+            if 0 <= x < refined.shape[1] and 0 <= y < refined.shape[0]:
+                cv2.circle(refined, (x, y), 2, 255, -1)
+
+        return refined
+    
     def fit_quadratic_on_raw_image(im_bw):
         """
         Fit a quadratic curve to:

@@ -10,17 +10,72 @@ import cv2
 import matplotlib.pyplot as plt
 from numpy import savetxt
 from numpy.linalg import inv
-#from matplotlib.animation import FuncAnimation
-
 from Image2Waypoints import Image2Waypoints
-
 from coppeliasim_zmqremoteapi_client import RemoteAPIClient
-
+from scipy.spatial.transform import Rotation
+from numpy import genfromtxt
 
 import casadi as ca
-
-
 from scipy.interpolate import interp1d
+
+#### Parse for logging arguments
+
+import argparse
+parser = argparse.ArgumentParser(description='Evaluation Logging Arguments')
+parser.add_argument('--eval_log', type=bool, default= False, help='Should evaluation and logging be enabled')
+parser.add_argument('--save_path', type=str, default= None, help='Directory to log evaluations')
+
+args = parser.parse_args()
+eval_log = args.eval_log
+save_path = args.save_path
+
+########## Controller specific functions
+
+def getBodyVel(sim,COM):
+    linear_vel, angular_vel = sim.getVelocity(COM)
+    sRb = sim.getObjectMatrix(COM,sim.handle_world)
+    Rot = np.array([[sRb[0],sRb[1],sRb[2]],[sRb[4],sRb[5],sRb[6]],[sRb[8],sRb[9],sRb[10]]])
+    vel_body = np.matmul(np.transpose(Rot),np.array([[linear_vel[0]],[linear_vel[1]],[linear_vel[2]]]))
+    realized_vel = np.abs(-1*vel_body[2].item())
+    return realized_vel
+
+
+def getReset():
+    Reset = []
+    path_loc = '/home/asalvi/code_workspace/Husky_CS_SB3/PoseEnhancedVN/train/MixPathFlip/'
+    
+    filenames = [
+        'ArcPath1.csv', 'ArcPath2.csv', 'ArcPath3.csv', 'ArcPath4.csv', 'ArcPath5.csv',
+        'ArcPath1_.csv', 'ArcPath2_.csv', 'ArcPath3_.csv', 'ArcPath4_.csv', 'ArcPath5_.csv'
+    ]
+    
+    for fname in filenames:
+        path = genfromtxt(path_loc + fname, delimiter=',')
+        if path.ndim == 1:
+            path = path[np.newaxis, :]  # handle single-line case
+
+        yaw = path[0, 2]
+        rot = Rotation.from_euler('xyz', [0, 0, yaw], degrees=False)
+        rot_quat = rot.as_quat()  # [x, y, z, w]
+
+        position = [path[0, 0], path[0, 1], 0.325,
+                    rot_quat[0], rot_quat[1], rot_quat[2], rot_quat[3]]
+        Reset.append(position)
+
+    return Reset
+
+def process_img(img):
+    img = np.frombuffer(img, dtype=np.uint8).reshape(resY, resX, 3)
+            # In CoppeliaSim images are left to right (x-axis), and bottom to top (y-axis)
+            # (consistent with the axes of vision sensors, pointing Z outwards, Y up)
+            # and color format is RGB triplets, whereas OpenCV uses BGR:
+    img = cv2.flip(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), 0) #Convert to Grayscale
+
+            # Current image
+    cropped_image = img[288:480, 0:640] # Crop image to only to relevant path data (Done heuristically)
+    bw_img = cv2.threshold(cropped_image, 125, 255, cv2.THRESH_BINARY)[1]  # convert the grayscale image to binary image
+    return bw_img
+
 
 def interpolate_waypoints_to_horizon(waypoints_meters, N):
     """Interpolate waypoints to get evenly spaced reference for NMPC."""
@@ -48,13 +103,10 @@ def interpolate_waypoints_to_horizon(waypoints_meters, N):
     return np.vstack([x_ref, y_ref, theta_ref])  # shape: (3, N+1)
 
 
-
-import casadi as ca
-
 def create_nmpc_solver(N=10, dt=0.05,
-                       Q_weights=[0.1, 0.1, 0.05],
-                       R_weights=[0.1, 0.1],
-                       v_des=0.75,
+                       Q_weights=[0.5, 0.5, 0.01],
+                       R_weights=[0.75, 0.75],
+                       v_des=0.5,
                        alpha=0.01):
     """
     Creates a nonlinear MPC solver for a differential drive robot using CasADi,
@@ -149,11 +201,7 @@ def create_nmpc_solver(N=10, dt=0.05,
     return solver, solver_vars
 
 
-
-## Variable initialization
-sim_time = []
-
-
+################### Standard variable initialization#############
 print('Program started')
 
 
@@ -166,114 +214,163 @@ fr_w = sim.getObject('/frw')
 rr_w = sim.getObject('/rrw')
 rl_w = sim.getObject('/rlw')
 IMU = sim.getObject('/Accelerometer_forceSensor')
-#COM = sim.getObject('/Husky/ReferenceFrame')
 COM = sim.getObject('/Husky/Accelerometer/Accelerometer_mass')
 Husky_ref = sim.getObject('/Husky')
+BodyFOR = sim.getObject('/FORBody')
+HuskyPos = sim.getObject('/FORBody/Husky/ReferenceFrame')
 
 
 defaultIdleFps = sim.getInt32Param(sim.intparam_idle_fps)
 sim.setInt32Param(sim.intparam_idle_fps, 0)
-
 # Run a simulation in stepping mode:
 client.setStepping(True)
 sim.startSimulation()
 client.step()  
 
-def process_img(img):
-    img = np.frombuffer(img, dtype=np.uint8).reshape(resY, resX, 3)
-            # In CoppeliaSim images are left to right (x-axis), and bottom to top (y-axis)
-            # (consistent with the axes of vision sensors, pointing Z outwards, Y up)
-            # and color format is RGB triplets, whereas OpenCV uses BGR:
-    img = cv2.flip(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), 0) #Convert to Grayscale
-
-            # Current image
-    cropped_image = img[288:480, 0:640] # Crop image to only to relevant path data (Done heuristically)
-    bw_img = cv2.threshold(cropped_image, 125, 255, cv2.THRESH_BINARY)[1]  # convert the grayscale image to binary image
-    return bw_img
+##################### Evaluation /logging check ###############
+## via argparser, default = 0
+reset = getReset()
+#print(reset)
+if eval_log == True:
+    log_vars = {
+        'time' : [],
+        'pose_X' : [],
+        'pose_Y' : [],
+        'linear_v' : [],
+    }
+else:
+    reset = reset[0]
+    log_vars = None
     
 
-
-while (t:= sim.getSimulationTime()) < 600:
+for loc_counter, location in enumerate(reset):
+    #print(location)
     
-    img, resX, resY = sim.getVisionSensorCharImage(visionSensorHandle)
-    im_bw = process_img(img)
-
-    H = Image2Waypoints.getHomography()
-    scale = 100
-    canvas_width = int(3.5 * scale)
-    canvas_height = int(5.0 * scale)
-    warped = cv2.warpPerspective(im_bw, H, (canvas_width, canvas_height))
-    warped = cv2.bitwise_not(warped)
-    height, width = warped.shape  # Or: warped.shape[:2]
-
-    fitted_path, band_points = Image2Waypoints.fit_quadratic_on_raw_image(im_bw)
-
-    waypoints_meters = Image2Waypoints.convert_pixel_path_to_waypoints_in_meters(
-        pixel_path=fitted_path,
-        warped_shape=(height, width),
-        scale=100  # use the same scale as used in warp
-    )
+    #reset location (for a sequence of 10 location)
+    sim.stopSimulation()
+    while sim.getSimulationState() != sim.simulation_stopped:
+        time.sleep(0.1)
+    sim.setStepping(True)
+    sim.startSimulation() 
+    sim.setObjectPose(BodyFOR, location, sim.handle_world)
+    client.step()
+    time.sleep(0.1)
+    client.step()
 
 
-    # --- Step 2: Setup NMPC and Interpolate Waypoints ---
-    solver, vars = create_nmpc_solver(N=10, dt=0.05)
-    X_ref_np = interpolate_waypoints_to_horizon(waypoints_meters, N=vars['N'])
-    X_ref_flat = X_ref_np.reshape((-1, 1))
+    sim_time = []
 
-    # Initial guess and state
-    x0 = np.array([0.0, 0.0, 0.0])
-    X_init = np.tile(x0.reshape(3, 1), (1, vars['N']+1))
-    U_init = np.zeros((2, vars['N']))
-    initial_guess = np.concatenate([X_init.reshape(-1, 1), U_init.reshape(-1, 1)], axis=0)
+    last_valid_waypoints = None  # Store the most recent valid path
 
-    # --- Step 3: Solve NMPC and Get Control ---
-    sol = solver(x0=initial_guess, p=X_ref_flat, lbg=0, ubg=0)
-    solution = sol['x'].full().flatten()
-    U_opt = solution[3 * (vars['N']+1):].reshape((2, vars['N']))
-    v_cmd, omega_cmd = U_opt[:, 0]
-
-    print(f"Apply: v = {v_cmd:.3f}, omega = {omega_cmd:.3f}")
-
-
-    #### set wheel velocities
-
-    t_a = 0.0770 # Virtual Radius
-    t_b = 0.0870 #Virtual Radius/ Virtual Trackwidth
+    while (t := sim.getSimulationTime()) < 30:
         
-    A = np.array([[t_a,t_a],[-t_b,t_b]])
+        img, resX, resY = sim.getVisionSensorCharImage(visionSensorHandle)
+        im_bw = process_img(img)
 
-    velocity = np.array([v_cmd,omega_cmd])
-    phi_dots = np.matmul(inv(A),velocity) #Inverse Kinematics
-    phi_dots = phi_dots.astype(float)
-    Left = phi_dots[0].item()
-    Right = phi_dots[1].item()
+        while im_bw.all() == None:
+            time.sleep(0.01)
+        cv2.imshow('bw image', im_bw)
+        cv2.waitKey(1)
 
-    sim.setJointTargetVelocity(fl_w, Left)
-    sim.setJointTargetVelocity(fr_w, Right)
-    sim.setJointTargetVelocity(rl_w, Left)
-    sim.setJointTargetVelocity(rr_w, Right)   
+        H = Image2Waypoints.getHomography()
+        scale = 100
+        canvas_width = int(3.5 * scale)
+        canvas_height = int(5.0 * scale)
+        warped = cv2.warpPerspective(im_bw, H, (canvas_width, canvas_height))
+        warped = cv2.bitwise_not(warped)
+        height, width = warped.shape
 
-    '''
-    import matplotlib.pyplot as plt
+        fitted_path, band_points = Image2Waypoints.fit_quadratic_on_raw_image(im_bw)
 
-    plt.figure()
-    plt.plot(waypoints_meters[:, 0], waypoints_meters[:, 1], 'bo-', label="Waypoints (m)")
-    plt.xlabel("Lateral offset (m)")
-    plt.ylabel("Forward distance (m)")
-    plt.title("Waypoints in Robot Frame")
-    plt.grid(True)
-    plt.axis("equal")
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-    '''
-    
+        if fitted_path is not None:
+            waypoints_meters = Image2Waypoints.convert_pixel_path_to_waypoints_in_meters(
+                pixel_path=fitted_path,
+                warped_shape=(height, width),
+                scale=scale
+            )
+            last_valid_waypoints = waypoints_meters  # Update if valid
+        else:
+            print("[MPC Loop] Warning: fitted_path is None. Reusing last valid waypoints.")
 
-    sim_time.append(t)
-    print(t)
+        # If no valid path has ever been found, skip this frame
+        if last_valid_waypoints is None:
+            print("[MPC Loop] No valid waypoints available. Skipping MPC step.")
+            client.step()
+            continue
 
-    client.step()  # triggers next simulation step
+        # --- Step 2: Setup NMPC and Interpolate Waypoints ---
+        solver, vars = create_nmpc_solver(N=10, dt=0.05)
+        X_ref_np = interpolate_waypoints_to_horizon(last_valid_waypoints, N=vars['N'])
+        X_ref_flat = X_ref_np.reshape((-1, 1))
+
+        x0 = np.array([0.0, 0.0, 0.0])
+        X_init = np.tile(x0.reshape(3, 1), (1, vars['N']+1))
+        U_init = np.zeros((2, vars['N']))
+        initial_guess = np.concatenate([X_init.reshape(-1, 1), U_init.reshape(-1, 1)], axis=0)
+
+        # --- Step 3: Solve NMPC and Get Control ---
+        sol = solver(x0=initial_guess, p=X_ref_flat, lbg=0, ubg=0)
+        solution = sol['x'].full().flatten()
+        U_opt = solution[3 * (vars['N']+1):].reshape((2, vars['N']))
+        v_cmd, omega_cmd = U_opt[:, 0]
+
+        print(f"Apply: v = {v_cmd:.3f}, omega = {omega_cmd:.3f}")
+
+        # --- Convert to wheel velocities ---
+        t_a = 0.0770  # Virtual radius
+        t_b = 0.0870  # Virtual trackwidth
+        A = np.array([[t_a, t_a], [-t_b, t_b]])
+        velocity = np.array([v_cmd, omega_cmd])
+        phi_dots = np.matmul(inv(A), velocity)
+        phi_dots = phi_dots.astype(float)
+        Left = phi_dots[0].item()
+        Right = phi_dots[1].item()
+
+        sim.setJointTargetVelocity(fl_w, Left)
+        sim.setJointTargetVelocity(fr_w, Right)
+        sim.setJointTargetVelocity(rl_w, Left)
+        sim.setJointTargetVelocity(rr_w, Right)
+
+        # --- Logging ---
+        linear_v = getBodyVel(sim, COM)
+        pose = sim.getObjectPose(HuskyPos, sim.handle_world)
+
+        log_vars['linear_v'].append(linear_v)
+        log_vars['pose_X'].append(pose[0])
+        log_vars['pose_Y'].append(pose[1])
+        log_vars['time'].append(t)
+
+        sim_time.append(t)
+        print(t)
+
+        client.step()
 
 
+    ######### save CSV of logged vairables ################
+    #default save_path = None
+    if save_path != None:
+        import pandas as pd
 
-sim.stopSimulation()
+        df_log = pd.DataFrame(log_vars)
+        df_log.to_csv(f"{save_path}MPC_{loc_counter}.csv", index=False)
+        print(f"{loc_counter}_Log saved to csv")
+
+
+sim.stopSimulation()   
+print('Program ended')
+
+
+'''
+        import matplotlib.pyplot as plt
+
+        plt.figure()
+        plt.plot(waypoints_meters[:, 0], waypoints_meters[:, 1], 'bo-', label="Waypoints (m)")
+        plt.xlabel("Lateral offset (m)")
+        plt.ylabel("Forward distance (m)")
+        plt.title("Waypoints in Robot Frame")
+        plt.grid(True)
+        plt.axis("equal")
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+'''
