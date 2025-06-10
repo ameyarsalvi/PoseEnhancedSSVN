@@ -14,9 +14,15 @@ from Image2Waypoints import Image2Waypoints
 from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 from scipy.spatial.transform import Rotation
 from numpy import genfromtxt
-
+import random
+import torchvision.transforms as T
 import casadi as ca
 from scipy.interpolate import interp1d
+import torch
+from torchvision import transforms
+import cv2
+import numpy as np
+from PIL import Image
 
 #### Parse for logging arguments
 
@@ -28,6 +34,31 @@ parser.add_argument('--save_path', type=str, default= None, help='Directory to l
 args = parser.parse_args()
 eval_log = args.eval_log
 save_path = args.save_path
+
+########## Image distortion 
+
+def randomize_pixel_location(image, radius):
+            rows, cols = image.shape
+            randomized_image = np.zeros_like(image)
+            
+            for i in range(rows):
+                for j in range(cols):
+                    # Generate random angle and distance within the circle
+                    angle = random.uniform(0, 2 * np.pi)
+                    distance = random.uniform(0, radius)
+                    
+                    # Calculate new position
+                    new_i = int(i + distance * np.cos(angle))
+                    new_j = int(j + distance * np.sin(angle))
+                    
+                    # Ensure new position is within bounds
+                    new_i = np.clip(new_i, 0, rows - 1)
+                    new_j = np.clip(new_j, 0, cols - 1)
+                    
+                    # Assign the pixel value to the new location
+                    randomized_image[new_i, new_j] = image[i, j]
+            
+            return randomized_image
 
 ########## Controller specific functions
 
@@ -104,9 +135,9 @@ def interpolate_waypoints_to_horizon(waypoints_meters, N):
 
 
 def create_nmpc_solver(N=10, dt=0.05,
-                       Q_weights=[0.5, 0.5, 0.01],
-                       R_weights=[0.75, 0.75],
-                       v_des=0.5,
+                       Q_weights=[0.1, 0.1, 0.1],
+                       R_weights=[0.1, 0.1],
+                       v_des=0.75,
                        alpha=0.01):
     """
     Creates a nonlinear MPC solver for a differential drive robot using CasADi,
@@ -218,6 +249,7 @@ COM = sim.getObject('/Husky/Accelerometer/Accelerometer_mass')
 Husky_ref = sim.getObject('/Husky')
 BodyFOR = sim.getObject('/FORBody')
 HuskyPos = sim.getObject('/FORBody/Husky/ReferenceFrame')
+AbsFrame = sim.handle_world
 
 
 defaultIdleFps = sim.getInt32Param(sim.intparam_idle_fps)
@@ -230,7 +262,8 @@ client.step()
 ##################### Evaluation /logging check ###############
 ## via argparser, default = 0
 reset = getReset()
-#print(reset)
+print(f'Reset values are{reset}')
+print(f'shape of Reset is{len(reset)}')
 if eval_log == True:
     log_vars = {
         'time' : [],
@@ -240,21 +273,27 @@ if eval_log == True:
     }
 else:
     reset = reset[0]
-    log_vars = None
+    log_vars = {
+        'time' : [],
+        'pose_X' : [],
+        'pose_Y' : [],
+        'linear_v' : [],
+    }
     
 
 for loc_counter, location in enumerate(reset):
-    #print(location)
+    print(f'location is {location}')
     
     #reset location (for a sequence of 10 location)
     sim.stopSimulation()
     while sim.getSimulationState() != sim.simulation_stopped:
-        time.sleep(0.1)
+        time.sleep(1)
     sim.setStepping(True)
     sim.startSimulation() 
+    print(f'world handle is {sim.handle_world}')
     sim.setObjectPose(BodyFOR, location, sim.handle_world)
     client.step()
-    time.sleep(0.1)
+    time.sleep(1)
     client.step()
 
 
@@ -267,6 +306,26 @@ for loc_counter, location in enumerate(reset):
         img, resX, resY = sim.getVisionSensorCharImage(visionSensorHandle)
         im_bw = process_img(img)
 
+
+        # Define the transform
+        blur_transform = T.Compose([
+            T.ToTensor(),
+            T.GaussianBlur(kernel_size=15, sigma=100),  # fixed blur
+            T.ToPILImage()
+        ])
+        
+        # Apply blur
+        blurred_img_pil = blur_transform(im_bw)
+
+        # Convert back to NumPy (if needed)
+        blurred_np = np.array(blurred_img_pil)
+
+        # Show with OpenCV
+        cv2.imshow("Augmented Image", cv2.cvtColor(blurred_np, cv2.COLOR_RGB2BGR))
+
+
+        #im_bw = randomize_pixel_location(im_bw,0.5)
+
         while im_bw.all() == None:
             time.sleep(0.01)
         cv2.imshow('bw image', im_bw)
@@ -276,11 +335,11 @@ for loc_counter, location in enumerate(reset):
         scale = 100
         canvas_width = int(3.5 * scale)
         canvas_height = int(5.0 * scale)
-        warped = cv2.warpPerspective(im_bw, H, (canvas_width, canvas_height))
+        warped = cv2.warpPerspective(blurred_np, H, (canvas_width, canvas_height))
         warped = cv2.bitwise_not(warped)
         height, width = warped.shape
 
-        fitted_path, band_points = Image2Waypoints.fit_quadratic_on_raw_image(im_bw)
+        fitted_path, band_points = Image2Waypoints.fit_quadratic_on_raw_image(blurred_np)
 
         if fitted_path is not None:
             waypoints_meters = Image2Waypoints.convert_pixel_path_to_waypoints_in_meters(
@@ -334,11 +393,12 @@ for loc_counter, location in enumerate(reset):
         # --- Logging ---
         linear_v = getBodyVel(sim, COM)
         pose = sim.getObjectPose(HuskyPos, sim.handle_world)
-
+        
         log_vars['linear_v'].append(linear_v)
         log_vars['pose_X'].append(pose[0])
         log_vars['pose_Y'].append(pose[1])
         log_vars['time'].append(t)
+        
 
         sim_time.append(t)
         print(t)
@@ -352,7 +412,7 @@ for loc_counter, location in enumerate(reset):
         import pandas as pd
 
         df_log = pd.DataFrame(log_vars)
-        df_log.to_csv(f"{save_path}MPC_{loc_counter}.csv", index=False)
+        df_log.to_csv(f"{save_path}MPC_GB_100_{loc_counter}.csv", index=False)
         print(f"{loc_counter}_Log saved to csv")
 
 

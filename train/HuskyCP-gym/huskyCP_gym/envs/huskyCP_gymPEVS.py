@@ -42,9 +42,9 @@ class HuskyCPEnvPathFren(Env):
 
         self.seed = seed
         #For Training
-        self.track_vel = np.random.uniform(0.5,0.99)
+        #self.track_vel = np.random.uniform(0.5,0.99)
         #For Evaluation
-        #self.track_vel = track_vel
+        self.track_vel = track_vel
         #Throttle randomization for training if necssary
         #self.throttle = random.randint(1, 20)
         self.throttle = 1

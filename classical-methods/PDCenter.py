@@ -14,6 +14,7 @@ from Image2Waypoints import Image2Waypoints
 from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 from scipy.spatial.transform import Rotation
 from numpy import genfromtxt
+import torchvision.transforms as T
 
 #### Parse for logging arguments
 
@@ -174,7 +175,12 @@ if eval_log == True:
     }
 else:
     reset = reset[0]
-    log_vars = None
+    log_vars = {
+        'time' : [],
+        'pose_X' : [],
+        'pose_Y' : [],
+        'linear_v' : [],
+    }
     
 
 for loc_counter, location in enumerate(reset):
@@ -204,7 +210,23 @@ for loc_counter, location in enumerate(reset):
         cv2.imshow('bw image',im_bw)
         cv2.waitKey(1)
 
-        error = compute_lateral_offset_error(im_bw)
+        # Define the transform
+        blur_transform = T.Compose([
+            T.ToTensor(),
+            T.GaussianBlur(kernel_size=15, sigma=100),  # fixed blur
+            T.ToPILImage()
+        ])
+        
+        # Apply blur
+        blurred_img_pil = blur_transform(im_bw)
+
+        # Convert back to NumPy (if needed)
+        blurred_np = np.array(blurred_img_pil)
+
+        # Show with OpenCV
+        cv2.imshow("Augmented Image", cv2.cvtColor(blurred_np, cv2.COLOR_RGB2BGR))
+
+        error = compute_lateral_offset_error(blurred_np)
         error_der = (error- error_old)/0.05
         error_old = error
         #print(f"Lateral offset error: {error:.2f} pixels")
@@ -251,7 +273,7 @@ for loc_counter, location in enumerate(reset):
         import pandas as pd
 
         df_log = pd.DataFrame(log_vars)
-        df_log.to_csv(f"{save_path}PD_{loc_counter}.csv", index=False)
+        df_log.to_csv(f"{save_path}PD_GB_100_{loc_counter}.csv", index=False)
         print(f"{loc_counter}_Log saved to csv")
     
     
