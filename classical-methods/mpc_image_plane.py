@@ -11,7 +11,6 @@ import matplotlib.pyplot as plt
 from numpy import savetxt
 from numpy.linalg import inv
 from Image2Waypoints import Image2Waypoints
-from Image2Waypoints2 import Image2Waypoints2
 from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 from scipy.spatial.transform import Rotation
 from numpy import genfromtxt
@@ -25,7 +24,6 @@ import cv2
 import numpy as np
 from PIL import Image
 
-
 #### Parse for logging arguments
 
 import argparse
@@ -37,30 +35,6 @@ args = parser.parse_args()
 eval_log = args.eval_log
 save_path = args.save_path
 
-########## Image distortion 
-
-def randomize_pixel_location(image, radius):
-            rows, cols = image.shape
-            randomized_image = np.zeros_like(image)
-            
-            for i in range(rows):
-                for j in range(cols):
-                    # Generate random angle and distance within the circle
-                    angle = random.uniform(0, 2 * np.pi)
-                    distance = random.uniform(0, radius)
-                    
-                    # Calculate new position
-                    new_i = int(i + distance * np.cos(angle))
-                    new_j = int(j + distance * np.sin(angle))
-                    
-                    # Ensure new position is within bounds
-                    new_i = np.clip(new_i, 0, rows - 1)
-                    new_j = np.clip(new_j, 0, cols - 1)
-                    
-                    # Assign the pixel value to the new location
-                    randomized_image[new_i, new_j] = image[i, j]
-            
-            return randomized_image
 
 ########## Controller specific functions
 
@@ -110,74 +84,30 @@ def process_img(img):
     return bw_img
 
 
-def interpolate_waypoints_to_horizon(waypoints_meters, N):
-    """Interpolate waypoints to get evenly spaced reference for NMPC."""
-    x_path = waypoints_meters[:, 0]
-    y_path = waypoints_meters[:, 1]
-
-    # Compute cumulative distances along the path
-    distances = np.insert(np.cumsum(np.linalg.norm(np.diff(waypoints_meters, axis=0), axis=1)), 0, 0)
+def interpolate_waypoints_image_plane(waypoints, N):
+    x_path = waypoints[:, 0]
+    y_path = waypoints[:, 1]
+    distances = np.insert(np.cumsum(np.linalg.norm(np.diff(waypoints, axis=0), axis=1)), 0, 0)
     total_length = distances[-1]
 
-    # Create interpolators
     fx = interp1d(distances, x_path, kind='linear', fill_value='extrapolate')
     fy = interp1d(distances, y_path, kind='linear', fill_value='extrapolate')
 
-    # Interpolate along arc-length
     interp_dists = np.linspace(0, total_length, N + 1)
     x_ref = fx(interp_dists)
     y_ref = fy(interp_dists)
 
-    # Approximate heading (theta) using gradient
     dx = np.gradient(x_ref)
     dy = np.gradient(y_ref)
     theta_ref = np.arctan2(dy, dx)
 
-    return np.vstack([x_ref, y_ref, theta_ref])  # shape: (3, N+1)
+    return np.vstack([x_ref, y_ref, theta_ref])
 
 
-import casadi as ca
-import numpy as np
 
-def create_nmpc_solver(N, dt,
-                       Q_weights=[0.1, 0.1, 0.1],
-                       R_weights=[0.1, 0.1],
-                       v_des=0.75,
-                       alpha=0.9,
-                       v_bounds=(0.0, 1.0),
-                       omega_bounds=(-1.0, 1.0)):
-    """
-    Creates a nonlinear MPC solver for a differential drive robot using CasADi,
-    including soft tracking of a desired linear velocity and bounded controls.
-
-    Parameters:
-        N : int
-            Horizon length.
-        dt : float
-            Timestep (s).
-        Q_weights : list of 3 floats
-            State cost weights [x, y, theta].
-        R_weights : list of 2 floats
-            Control cost weights [v, omega].
-        v_des : float
-            Desired linear velocity (m/s).
-        alpha : float
-            Penalty weight on velocity tracking (soft constraint).
-        v_bounds : tuple (v_min, v_max)
-            Bounds on linear velocity (m/s).
-        omega_bounds : tuple (omega_min, omega_max)
-            Bounds on angular velocity (rad/s).
-
-    Returns:
-        solver : CasADi solver object
-        solver_vars : dict with symbolic variables and parameters
-        lbx : lower bounds on decision variables
-        ubx : upper bounds on decision variables
-    """
-
-    # Symbolic variables
-    x = ca.SX.sym('x')
-    y = ca.SX.sym('y')
+def create_image_plane_mpc(N=10, dt=0.01, Q_weights=[0.0, 0.1, 0.1], R_weights=[0.1, 0.1], v_des=1000.0, alpha=0.1):
+    x = ca.SX.sym('x')  # image x
+    y = ca.SX.sym('y')  # image y
     theta = ca.SX.sym('theta')
     v = ca.SX.sym('v')
     omega = ca.SX.sym('omega')
@@ -185,67 +115,43 @@ def create_nmpc_solver(N, dt,
     states = ca.vertcat(x, y, theta)
     controls = ca.vertcat(v, omega)
 
-    # Dynamics
     rhs = ca.vertcat(
         v * ca.cos(theta),
-        -1*v * ca.sin(theta),
+        v * ca.sin(theta),
         omega
     )
+
     f = ca.Function('f', [states, controls], [rhs])
 
-    # Optimization variables
     X = ca.SX.sym('X', 3, N+1)
     U = ca.SX.sym('U', 2, N)
     X_ref = ca.SX.sym('X_ref', 3, N+1)
 
-    # Cost function weights
     Q = ca.diag(ca.SX(Q_weights))
     R = ca.diag(ca.SX(R_weights))
 
-    # Objective and constraints
     obj = 0
     g = []
-
-    g.append(X[:, 0] - X_ref[:, 0])  # initial condition
+    g.append(X[:, 0] - X_ref[:, 0])
 
     for k in range(N):
         x_next = X[:, k] + dt * f(X[:, k], U[:, k])
         g.append(X[:, k+1] - x_next)
 
-        # Path tracking cost
         obj += ca.mtimes([(X[:, k] - X_ref[:, k]).T, Q, (X[:, k] - X_ref[:, k])])
         obj += ca.mtimes([U[:, k].T, R, U[:, k]])
+        obj += alpha * (U[0, k] - v_des) ** 2
 
-        # Soft velocity tracking penalty
-        obj += alpha * (U[0, k] - v_des)**2
 
     g = ca.vertcat(*g)
-
-    # Flatten decision variables and parameters
     decision_vars = ca.vertcat(ca.reshape(X, -1, 1), ca.reshape(U, -1, 1))
     params = ca.reshape(X_ref, -1, 1)
 
-    # Define bounds
-    n_X = X.size1() * (N + 1)  # 3 * (N+1)
-    n_U = U.size1() * N        # 2 * N
-
-    lbx = [-ca.inf] * n_X
-    ubx = [ ca.inf] * n_X
-
-    for _ in range(N):
-        lbx += [v_bounds[0], omega_bounds[0]]
-        ubx += [v_bounds[1], omega_bounds[1]]
-
-    lbx = ca.vertcat(*lbx)
-    ubx = ca.vertcat(*ubx)
-
-    # Solver setup
     nlp = {'x': decision_vars, 'f': obj, 'g': g, 'p': params}
     opts = {"ipopt.print_level": 0, "print_time": 0}
 
     solver = ca.nlpsol('solver', 'ipopt', nlp, opts)
 
-    # Return solver and useful handles
     solver_vars = {
         'X': X,
         'U': U,
@@ -256,8 +162,7 @@ def create_nmpc_solver(N, dt,
         'n_controls': 2
     }
 
-    return solver, solver_vars, lbx, ubx
-
+    return solver, solver_vars
 
 
 ################### Standard variable initialization#############
@@ -359,93 +264,69 @@ for loc_counter, location in enumerate([reset]):
         cv2.imshow('bw image', im_bw)
         #cv2.waitKey(1)
 
-        left_path, right_path, center_path, vis_img = Image2Waypoints2.fit_dual_quadratics_on_raw_image(im_bw)
-        #print(f"length of waypoints is :{len(center_path)}")
-
-        if vis_img is not None:
-            cv2.imshow("Dual Lane Fit", vis_img)
-            #cv2.waitKey(0)
-            
-        '''
-
-        H = Image2Waypoints.getHomography()
-        #print(f"H is {H}")
-        scale = 100
-        canvas_width = int(3.5 * scale)
-        canvas_height = int(5.0 * scale)
-        warped = cv2.warpPerspective(blurred_np, H, (canvas_width, canvas_height))
-        warped = cv2.bitwise_not(warped)
-        height, width = warped.shape
+        #H = Image2Waypoints.getHomography()
+        #scale = 50
+        #canvas_width = int(3.5 * scale)
+        #canvas_height = int(5.0 * scale)
+        #warped = cv2.warpPerspective(blurred_np, H, (canvas_width, canvas_height))
+        #warped = cv2.bitwise_not(warped)
+        #height, width = warped.shape
 
         fitted_path, band_points = Image2Waypoints.fit_quadratic_on_raw_image(blurred_np)
-        
 
-        if fitted_path is not None:
-            waypoints_meters = Image2Waypoints.convert_pixel_path_to_waypoints_in_meters(
-                pixel_path=fitted_path,
-                warped_shape=(height, width),
-                scale=scale
-            )
-            last_valid_waypoints = waypoints_meters  # Update if valid
-        else:
-            print("[MPC Loop] Warning: fitted_path is None. Reusing last valid waypoints.")
+        img_height, img_width = 192, 640
+        camera_center = np.array([img_width // 2, img_height - 1])
 
-        # If no valid path has ever been found, skip this frame
-        if last_valid_waypoints is None:
-            print("[MPC Loop] No valid waypoints available. Skipping MPC step.")
-            client.step()
-            continue
-            
-        '''
-        '''
-        H_img_to_world = np.array([
-            [-9.73579876e-04,  1.32734331e-02, -1.30207058e+01],
-            [-7.23895022e-03, -4.04996106e-03,  1.87419214e+01],
-            [ 7.17262395e-04,  3.27198741e-03,  1.00000000e+00]
-        ])
-        '''
-        H_img_to_world = np.array([
-            [ 1.47455097e-02, -5.19979651e-03, -3.72375854e+00],
-            [-3.78156614e-03, -2.76291572e-02,  1.90269435e+01],
-            [-1.31813484e-03,  8.98766154e-03,  1.00000000e+00]
-        ])
+        # Interpolate path
+        N = 25
+        X_ref_img = interpolate_waypoints_image_plane(fitted_path, N)
+        X_ref_flat = X_ref_img.reshape((-1, 1))
 
-        if center_path is not None:
-            waypoints = Image2Waypoints2.convert_pixel_path_to_waypoints(center_path, H_img_to_world)
-            last_valid_waypoints = waypoints
-        else:
-            print("[MPC Loop] Warning: fitted_path is None. Reusing last valid waypoints.")
-
-        #Image2Waypoints2.plot_waypoints(last_valid_waypoints)
-
-        if last_valid_waypoints is None:
-            print("[MPC Loop] No valid waypoints available. Skipping MPC step.")
-            client.step()
-            continue
-
-
-        print(f"length of valid waypoints is :{len(last_valid_waypoints)}")      
-
-        # --- Step 2: Setup NMPC and Interpolate Waypoints ---
-        #solver, vars = create_nmpc_solver(N=10, dt=0.01)
-        solver, vars, lbx, ubx = create_nmpc_solver(N=10, dt=0.01)
-
-        X_ref_np = interpolate_waypoints_to_horizon(last_valid_waypoints, N=vars['N'])
-        X_ref_flat = X_ref_np.reshape((-1, 1))
-
-        x0 = np.array([0.0, 0.0, 0.0])
-        X_init = np.tile(x0.reshape(3, 1), (1, vars['N']+1))
-        U_init = np.zeros((2, vars['N']))
+        # Initialize solver
+        solver, vars = create_image_plane_mpc(N=N)
+        x0 = np.array([camera_center[0], camera_center[1], -np.pi/2])  # Facing up
+        X_init = np.tile(x0.reshape(3, 1), (1, N+1))
+        U_init = np.zeros((2, N))
         initial_guess = np.concatenate([X_init.reshape(-1, 1), U_init.reshape(-1, 1)], axis=0)
 
-        # --- Step 3: Solve NMPC and Get Control ---
-        #sol = solver(x0=initial_guess, p=X_ref_flat, lbg=0, ubg=0)
-        sol = solver(x0=initial_guess,p=X_ref_flat,lbx=lbx,ubx=ubx,lbg=0,ubg=0)
+        # Solve MPC
+        sol = solver(x0=initial_guess, p=X_ref_flat, lbg=0, ubg=0)
         solution = sol['x'].full().flatten()
         U_opt = solution[3 * (vars['N']+1):].reshape((2, vars['N']))
-        v_cmd, omega_cmd = U_opt[:, 4]
+        v_cmd, omega_cmd = U_opt[:, 20]
+        v_cmd = np.clip(v_cmd,0,1.0)
+        omega_cmd = np.clip(omega_cmd,-1.0,1.0)
 
         print(f"Apply: v = {v_cmd:.3f}, omega = {omega_cmd:.3f}")
+
+        ########## visualization code #############
+        # Convert MPC reference and fitted path to int for display
+        ref_pts = np.vstack([X_ref_img[0], X_ref_img[1]]).T.astype(int)
+        fitted_pts = fitted_path.astype(int)
+        x_img, y_img = int(camera_center[0]), int(camera_center[1])
+        theta_img = x0[2]  # current heading in image plane
+
+        # Draw fitted curve (white)
+        for pt in fitted_pts:
+            cv2.circle(blurred_np, tuple(pt), radius=2, color=255, thickness=-1)
+
+        # Draw MPC reference points (blue)
+        for pt in ref_pts:
+            cv2.circle(blurred_np, tuple(pt), radius=3, color=100, thickness=-1)
+
+        # Draw camera center (red)
+        cv2.circle(blurred_np, (x_img, y_img), radius=5, color=0, thickness=-1)
+
+        # Draw heading line (green)
+        line_len = 30  # in pixels
+        tip_x = int(x_img + line_len * np.cos(theta_img))
+        tip_y = int(y_img + line_len * np.sin(theta_img))
+        cv2.line(blurred_np, (x_img, y_img), (tip_x, tip_y), color=128, thickness=2)
+
+        # Show overlay
+        cv2.imshow("Image Plane MPC Overlay", cv2.cvtColor(blurred_np, cv2.COLOR_RGB2BGR))
+        cv2.waitKey(1)
+
 
         # --- Convert to wheel velocities ---
         t_a = 0.0770  # Virtual radius
@@ -476,28 +357,6 @@ for loc_counter, location in enumerate([reset]):
         print(t)
 
         client.step()
-        '''
-        # Project reference waypoints onto image for visualization
-        ref_pts = X_ref_np[:2, :].T.astype(int)  # shape: (N+1, 2)
-        robot_pos = (int(x0[0]), int(x0[1]))  # current location
-
-        # Overlay reference path (blue)
-        for pt in ref_pts:
-            cv2.circle(warped, tuple(pt), radius=3, color=100, thickness=-1)
-
-        # Draw robot location (red)
-        cv2.circle(warped, robot_pos, radius=5, color=255, thickness=-1)
-
-        # OPTIONAL: Plot predicted trajectory (in image plane if desired)
-        predicted_X = solution[:3 * (vars['N'] + 1)].reshape((3, vars['N'] + 1))
-        pred_pts = predicted_X[:2, :].T.astype(int)
-        # for pt in pred_pts:
-        cv2.circle(warped, tuple(pt), radius=2, color=180, thickness=1)
-
-        # Display the visualized image
-        cv2.imshow("MPC Image Plane Tracking", warped)
-        '''
-        cv2.waitKey(1)
 
 
     ######### save CSV of logged vairables ################
