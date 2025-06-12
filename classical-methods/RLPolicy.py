@@ -119,150 +119,136 @@ reset = getReset()
 print(f'Reset values are{reset}')
 print(f'shape of Reset is{len(reset)}')
 if eval_log == True:
-    log_vars = {
-        'time' : [],
-        'pose_X' : [],
-        'pose_Y' : [],
-        'linear_v' : [],
+    blur = {
+        'kernal' : [3, 15, 25, 35, 45],
+        'sigma' : [0.001, 5, 15, 35, 55]
     }
 else:
     reset = [reset[0]]
-    log_vars = {
-        'time' : [],
-        'pose_X' : [],
-        'pose_Y' : [],
-        'linear_v' : [],
+    blur = {
+        'kernal' : [3],
+        'sigma' : [0.001]
     }
     
-
-for loc_counter, location in enumerate([reset]):
-    print(f'location is {location}')
-    
-    #reset location (for a sequence of 10 location)
-    sim.stopSimulation()
-    while sim.getSimulationState() != sim.simulation_stopped:
+for sigma_val, kernal_val in zip(blur['sigma'], blur['kernal']):  
+    for loc_counter, location in enumerate([reset]):
+        print(f'location is {location}')
+        
+        #reset location (for a sequence of 10 location)
+        sim.stopSimulation()
+        while sim.getSimulationState() != sim.simulation_stopped:
+            time.sleep(1)
+        sim.setStepping(True)
+        sim.startSimulation() 
+        print(f'world handle is {sim.handle_world}')
+        sim.setObjectPose(BodyFOR, location, sim.handle_world)
+        client.step()
         time.sleep(1)
-    sim.setStepping(True)
-    sim.startSimulation() 
-    print(f'world handle is {sim.handle_world}')
-    sim.setObjectPose(BodyFOR, location, sim.handle_world)
-    client.step()
-    time.sleep(1)
-    client.step()
+        client.step()
 
-    save_dir = "/home/asalvi/raw_imgs/"
-    os.makedirs(save_dir, exist_ok=True)
+        save_dir = "/home/asalvi/raw_imgs/"
+        os.makedirs(save_dir, exist_ok=True)
 
-    frame_count = 0
+        frame_count = 0
 
-    sim_time = []
-    while (t:= sim.getSimulationTime()) < 30:
-        
-        img, resX, resY = sim.getVisionSensorCharImage(visionSensorHandle)
-        im_bw = process_img(img)
-
-        im_bw_save = cv2.bitwise_not(im_bw)
-
-        if im_bw is not None:
-        # Save image
-            filename = os.path.join(save_dir, f"frame_{frame_count:04d}.png")
-            cv2.imwrite(filename, im_bw_save)
-            print(f"Saved {filename}")
-            frame_count += 1
-
-
-
-        # Define the transform
-        blur_transform = T.Compose([
-            T.ToTensor(),
-            T.GaussianBlur(kernel_size=15, sigma=100),  # fixed blur
-            T.ToPILImage()
-        ])
-        
-        # Apply blur
-        blurred_img_pil = blur_transform(im_bw)
-
-        # Convert back to NumPy (if needed)
-        blurred_np = np.array(blurred_img_pil)
-
-
-        # Show with OpenCV
-        cv2.imshow("Augmented Image", cv2.cvtColor(blurred_np, cv2.COLOR_RGB2BGR))
-
-        #resized = cv2.resize(im_bw, (320, 96), interpolation=cv2.INTER_NEAREST)
-        #grayscale = np.expand_dims(resized, axis=-1).astype(np.uint8)  # (96, 320, 1)
-        #transposed = np.transpose(grayscale, (2, 0, 1))  # (1, 96, 320)
-        im_bw = cv2.resize(blurred_np, (0,0), fx=0.5, fy=0.5)
-        im_bw = cv2.bitwise_not(im_bw)
-        cv2.imshow('input image',im_bw)
-        cv2.waitKey(1)
-        im_bw_input = np.frombuffer(im_bw, dtype=np.uint8).reshape(96, 320,1)
-
-        pred = model.policy.predict(im_bw_input)
-        a = pred[0]
-        V = 0.25*a[0].item() + 0.75
-        OMG = 0.5*a[1].item()
-
-        #### set wheel velocities
-
-        t_a = 0.0770 # Virtual Radius
-        t_b = 0.0870 #Virtual Radius/ Virtual Trackwidth
+        sim_time = []
+        log_vars = {
+                'time' : [],
+                'pose_X' : [],
+                'pose_Y' : [],
+                'linear_v' : [],
+            }
+        while (t:= sim.getSimulationTime()) < 30:
             
-        A = np.array([[t_a,t_a],[-t_b,t_b]])
+            img, resX, resY = sim.getVisionSensorCharImage(visionSensorHandle)
+            im_bw = process_img(img)
 
-        #velocity = np.array([v_cmd,omega_cmd])
-        velocity = np.array([V,OMG]) #Only for RL policy
-        phi_dots = np.matmul(inv(A),velocity) #Inverse Kinematics
-        phi_dots = phi_dots.astype(float)
-        Left = phi_dots[0].item()
-        Right = phi_dots[1].item()
+            im_bw_save = cv2.bitwise_not(im_bw)
 
-        sim.setJointTargetVelocity(fl_w, Left)
-        sim.setJointTargetVelocity(fr_w, Right)
-        sim.setJointTargetVelocity(rl_w, Left)
-        sim.setJointTargetVelocity(rr_w, Right)   
+            if im_bw is not None:
+            # Save image
+                filename = os.path.join(save_dir, f"frame_{frame_count:04d}.png")
+                cv2.imwrite(filename, im_bw_save)
+                print(f"Saved {filename}")
+                frame_count += 1
 
-        # --- Logging ---
-        linear_v = getBodyVel(sim, COM)
-        pose = sim.getObjectPose(HuskyPos, sim.handle_world)
-        
-        log_vars['linear_v'].append(linear_v)
-        log_vars['pose_X'].append(pose[0])
-        log_vars['pose_Y'].append(pose[1])
-        log_vars['time'].append(t)
 
-        
-        
 
-        sim_time.append(t)
-        print(t)
+            # Define the transform
+            blur_transform = T.Compose([
+                T.ToTensor(),
+                T.GaussianBlur(kernel_size=15, sigma=100),  # fixed blur
+                T.ToPILImage()
+            ])
+            
+            # Apply blur
+            blurred_img_pil = blur_transform(im_bw)
 
-        client.step()  # triggers next simulation step
+            # Convert back to NumPy (if needed)
+            blurred_np = np.array(blurred_img_pil)
 
-    ######### save CSV of logged vairables ################
-    #default save_path = None
-    if save_path != None:
-        import pandas as pd
 
-        df_log = pd.DataFrame(log_vars)
-        df_log.to_csv(f"{save_path}PEVN_GB_100{loc_counter}.csv", index=False)
-        print(f"{loc_counter}_Log saved to csv")
+            # Show with OpenCV
+            cv2.imshow("Augmented Image", cv2.cvtColor(blurred_np, cv2.COLOR_RGB2BGR))
+
+            #resized = cv2.resize(im_bw, (320, 96), interpolation=cv2.INTER_NEAREST)
+            #grayscale = np.expand_dims(resized, axis=-1).astype(np.uint8)  # (96, 320, 1)
+            #transposed = np.transpose(grayscale, (2, 0, 1))  # (1, 96, 320)
+            im_bw = cv2.resize(blurred_np, (0,0), fx=0.5, fy=0.5)
+            im_bw = cv2.bitwise_not(im_bw)
+            cv2.imshow('input image',im_bw)
+            cv2.waitKey(1)
+            im_bw_input = np.frombuffer(im_bw, dtype=np.uint8).reshape(96, 320,1)
+
+            pred = model.policy.predict(im_bw_input)
+            a = pred[0]
+            V = 0.25*a[0].item() + 0.75
+            OMG = 0.5*a[1].item()
+
+            #### set wheel velocities
+
+            t_a = 0.0770 # Virtual Radius
+            t_b = 0.0870 #Virtual Radius/ Virtual Trackwidth
+                
+            A = np.array([[t_a,t_a],[-t_b,t_b]])
+
+            #velocity = np.array([v_cmd,omega_cmd])
+            velocity = np.array([V,OMG]) #Only for RL policy
+            phi_dots = np.matmul(inv(A),velocity) #Inverse Kinematics
+            phi_dots = phi_dots.astype(float)
+            Left = phi_dots[0].item()
+            Right = phi_dots[1].item()
+
+            sim.setJointTargetVelocity(fl_w, Left)
+            sim.setJointTargetVelocity(fr_w, Right)
+            sim.setJointTargetVelocity(rl_w, Left)
+            sim.setJointTargetVelocity(rr_w, Right)   
+
+            # --- Logging ---
+            linear_v = getBodyVel(sim, COM)
+            pose = sim.getObjectPose(HuskyPos, sim.handle_world)
+            
+            log_vars['linear_v'].append(linear_v)
+            log_vars['pose_X'].append(pose[0])
+            log_vars['pose_Y'].append(pose[1])
+            log_vars['time'].append(t)
+
+            
+            
+
+            sim_time.append(t)
+            print(t)
+
+            client.step()  # triggers next simulation step
+
+        ######### save CSV of logged vairables ################
+        #default save_path = None
+        if save_path != None:
+            import pandas as pd
+
+            df_log = pd.DataFrame(log_vars)
+            df_log.to_csv(f"{save_path}RLPEVN_k_{kernal_val}_s_{sigma_val}_{loc_counter}.csv", index=False)
+            print(f"{loc_counter}_Log saved to csv")
 
 
 sim.stopSimulation()
-
-
-'''
-    import matplotlib.pyplot as plt
-
-    plt.figure()
-    plt.plot(waypoints_meters[:, 0], waypoints_meters[:, 1], 'bo-', label="Waypoints (m)")
-    plt.xlabel("Lateral offset (m)")
-    plt.ylabel("Forward distance (m)")
-    plt.title("Waypoints in Robot Frame")
-    plt.grid(True)
-    plt.axis("equal")
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-    '''

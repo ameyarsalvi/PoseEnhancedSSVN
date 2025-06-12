@@ -183,150 +183,153 @@ client.step()
 reset = getReset()
 print(f'Reset values are{reset}')
 print(f'shape of Reset is{len(reset)}')
+
 if eval_log == True:
-    log_vars = {
-        'time' : [],
-        'pose_X' : [],
-        'pose_Y' : [],
-        'linear_v' : [],
+    blur = {
+        'kernal' : [3, 15, 25, 35, 45],
+        'sigma' : [0.001, 5, 15, 35, 55]
     }
 else:
     reset = [reset[0]]
-    log_vars = {
-        'time' : [],
-        'pose_X' : [],
-        'pose_Y' : [],
-        'linear_v' : [],
+    blur = {
+        'kernal' : [3],
+        'sigma' : [0.001]
     }
-    
 
-for loc_counter, location in enumerate(reset):
-    print(f'location is {location}')
-    
-    #reset location (for a sequence of 10 location)
-    sim.stopSimulation()
-    while sim.getSimulationState() != sim.simulation_stopped:
-        time.sleep(1)
-    sim.setStepping(True)
-    sim.startSimulation() 
-    print(f'world handle is {sim.handle_world}')
-    sim.setObjectPose(BodyFOR, location, sim.handle_world)
-    client.step()
-    time.sleep(1)
-    client.step()
-
-
-    sim_time = []
-
-    last_valid_waypoints = None  # Store the most recent valid path
-
-    while (t := sim.getSimulationTime()) < 30:
+for sigma_val, kernal_val in zip(blur['sigma'], blur['kernal']):  
+    for loc_counter, location in enumerate(reset):
+        print(f'location is {location}')
         
-        img, resX, resY = sim.getVisionSensorCharImage(visionSensorHandle)
-        im_bw = process_img(img)
-
-
-        # Define the transform
-        blur_transform = T.Compose([
-            T.ToTensor(),
-            T.GaussianBlur(kernel_size=3, sigma=0.001),  # fixed blur
-            T.ToPILImage()
-        ])
-        
-        # Apply blur
-        blurred_img_pil = blur_transform(im_bw)
-
-        # Convert back to NumPy (if needed)
-        blurred_np = np.array(blurred_img_pil)
-
-        # Show with OpenCV
-        cv2.imshow("Augmented Image", cv2.cvtColor(blurred_np, cv2.COLOR_RGB2BGR))
-
-
-        #im_bw = randomize_pixel_location(im_bw,0.5)
-
-        while im_bw.all() == None:
-            time.sleep(0.01)
-        cv2.imshow('bw image', im_bw)
-        #cv2.waitKey(1)
-
-        left_path, right_path, center_path, vis_img = Image2Waypoints2.fit_dual_quadratics_on_raw_image(im_bw)
-        #print(f"length of waypoints is :{len(center_path)}")
-
-        if vis_img is not None:
-            cv2.imshow("Dual Lane Fit", vis_img)
-            #cv2.waitKey(0)
-            
-        H_img_to_world = np.array([
-            [ 1.47455097e-02, -5.19979651e-03, -3.72375854e+00],
-            [-3.78156614e-03, -2.76291572e-02,  1.90269435e+01],
-            [-1.31813484e-03,  8.98766154e-03,  1.00000000e+00]
-        ])
-
-        if center_path is not None:
-            waypoints = Image2Waypoints2.convert_pixel_path_to_waypoints(center_path, H_img_to_world)
-            last_valid_waypoints = waypoints
-        else:
-            print("[MPC Loop] Warning: fitted_path is None. Reusing last valid waypoints.")
-
-        #Image2Waypoints2.plot_waypoints(last_valid_waypoints)
-
-        if last_valid_waypoints is None:
-            print("[MPC Loop] No valid waypoints available. Skipping MPC step.")
-            client.step()
-            continue
-
-
-        ####
-        #PurePursuit Code
-        ####
-
-        if last_valid_waypoints is not None:
-            v_cmd, omega_cmd = pure_pursuit_control(last_valid_waypoints, v_nominal=0.75, lookahead_dist=5)
-
-
-
-        print(f"Apply: v = {v_cmd:.3f}, omega = {omega_cmd:.3f}")
-
-        # --- Convert to wheel velocities ---
-        t_a = 0.0770  # Virtual radius
-        t_b = 0.0870  # Virtual trackwidth
-        A = np.array([[t_a, t_a], [-t_b, t_b]])
-        velocity = np.array([v_cmd, omega_cmd])
-        phi_dots = np.matmul(inv(A), velocity)
-        phi_dots = phi_dots.astype(float)
-        Left = phi_dots[0].item()
-        Right = phi_dots[1].item()
-
-        sim.setJointTargetVelocity(fl_w, Left)
-        sim.setJointTargetVelocity(fr_w, Right)
-        sim.setJointTargetVelocity(rl_w, Left)
-        sim.setJointTargetVelocity(rr_w, Right)
-
-        # --- Logging ---
-        linear_v = getBodyVel(sim, COM)
-        pose = sim.getObjectPose(HuskyPos, sim.handle_world)
-        
-        log_vars['linear_v'].append(linear_v)
-        log_vars['pose_X'].append(pose[0])
-        log_vars['pose_Y'].append(pose[1])
-        log_vars['time'].append(t)
-        
-
-        sim_time.append(t)
-        print(t)
-
+        #reset location (for a sequence of 10 location)
+        sim.stopSimulation()
+        while sim.getSimulationState() != sim.simulation_stopped:
+            time.sleep(1)
+        sim.setStepping(True)
+        sim.startSimulation() 
+        print(f'world handle is {sim.handle_world}')
+        sim.setObjectPose(BodyFOR, location, sim.handle_world)
         client.step()
-        cv2.waitKey(1)
+        time.sleep(1)
+        client.step()
 
 
-    ######### save CSV of logged vairables ################
-    #default save_path = None
-    if save_path != None:
-        import pandas as pd
+        sim_time = []
+        log_vars = {
+                'time' : [],
+                'pose_X' : [],
+                'pose_Y' : [],
+                'linear_v' : [],
+            }
 
-        df_log = pd.DataFrame(log_vars)
-        df_log.to_csv(f"{save_path}MPC_GB_100_{loc_counter}.csv", index=False)
+        last_valid_waypoints = None  # Store the most recent valid path
+
+        while (t := sim.getSimulationTime()) < 30:
+            
+            img, resX, resY = sim.getVisionSensorCharImage(visionSensorHandle)
+            im_bw = process_img(img)
+
+
+            # Define the transform
+            blur_transform = T.Compose([
+                T.ToTensor(),
+                T.GaussianBlur(kernel_size=3, sigma=0.001),  # fixed blur
+                T.ToPILImage()
+            ])
+            
+            # Apply blur
+            blurred_img_pil = blur_transform(im_bw)
+
+            # Convert back to NumPy (if needed)
+            blurred_np = np.array(blurred_img_pil)
+
+            # Show with OpenCV
+            cv2.imshow("Augmented Image", cv2.cvtColor(blurred_np, cv2.COLOR_RGB2BGR))
+
+
+            #im_bw = randomize_pixel_location(im_bw,0.5)
+
+            while im_bw.all() == None:
+                time.sleep(0.01)
+            cv2.imshow('bw image', im_bw)
+            #cv2.waitKey(1)
+
+            left_path, right_path, center_path, vis_img = Image2Waypoints2.fit_dual_quadratics_on_raw_image(im_bw)
+            #print(f"length of waypoints is :{len(center_path)}")
+
+            if vis_img is not None:
+                cv2.imshow("Dual Lane Fit", vis_img)
+                #cv2.waitKey(0)
+                
+            H_img_to_world = np.array([
+                [ 1.47455097e-02, -5.19979651e-03, -3.72375854e+00],
+                [-3.78156614e-03, -2.76291572e-02,  1.90269435e+01],
+                [-1.31813484e-03,  8.98766154e-03,  1.00000000e+00]
+            ])
+
+            if center_path is not None:
+                waypoints = Image2Waypoints2.convert_pixel_path_to_waypoints(center_path, H_img_to_world)
+                last_valid_waypoints = waypoints
+            else:
+                print("[MPC Loop] Warning: fitted_path is None. Reusing last valid waypoints.")
+
+            #Image2Waypoints2.plot_waypoints(last_valid_waypoints)
+
+            if last_valid_waypoints is None:
+                print("[MPC Loop] No valid waypoints available. Skipping MPC step.")
+                client.step()
+                continue
+
+
+            ####
+            #PurePursuit Code
+            ####
+
+            if last_valid_waypoints is not None:
+                v_cmd, omega_cmd = pure_pursuit_control(last_valid_waypoints, v_nominal=0.75, lookahead_dist=5)
+
+
+
+            print(f"Apply: v = {v_cmd:.3f}, omega = {omega_cmd:.3f}")
+
+            # --- Convert to wheel velocities ---
+            t_a = 0.0770  # Virtual radius
+            t_b = 0.0870  # Virtual trackwidth
+            A = np.array([[t_a, t_a], [-t_b, t_b]])
+            velocity = np.array([v_cmd, omega_cmd])
+            phi_dots = np.matmul(inv(A), velocity)
+            phi_dots = phi_dots.astype(float)
+            Left = phi_dots[0].item()
+            Right = phi_dots[1].item()
+
+            sim.setJointTargetVelocity(fl_w, Left)
+            sim.setJointTargetVelocity(fr_w, Right)
+            sim.setJointTargetVelocity(rl_w, Left)
+            sim.setJointTargetVelocity(rr_w, Right)
+
+            # --- Logging ---
+            linear_v = getBodyVel(sim, COM)
+            pose = sim.getObjectPose(HuskyPos, sim.handle_world)
+            
+            log_vars['linear_v'].append(linear_v)
+            log_vars['pose_X'].append(pose[0])
+            log_vars['pose_Y'].append(pose[1])
+            log_vars['time'].append(t)
+            
+
+            sim_time.append(t)
+            print(t)
+
+            client.step()
+            cv2.waitKey(1)
+
+
+        ######### save CSV of logged vairables ################
+        #default save_path = None
+        if save_path != None:
+            import pandas as pd
+
+            df_log = pd.DataFrame(log_vars)
+            df_log.to_csv(f"{save_path}PureP_k_{kernal_val}_s_{sigma_val}_{loc_counter}.csv", index=False)
         print(f"{loc_counter}_Log saved to csv")
 
 

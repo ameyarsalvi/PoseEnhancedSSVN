@@ -37,31 +37,6 @@ args = parser.parse_args()
 eval_log = args.eval_log
 save_path = args.save_path
 
-########## Image distortion 
-
-def randomize_pixel_location(image, radius):
-            rows, cols = image.shape
-            randomized_image = np.zeros_like(image)
-            
-            for i in range(rows):
-                for j in range(cols):
-                    # Generate random angle and distance within the circle
-                    angle = random.uniform(0, 2 * np.pi)
-                    distance = random.uniform(0, radius)
-                    
-                    # Calculate new position
-                    new_i = int(i + distance * np.cos(angle))
-                    new_j = int(j + distance * np.sin(angle))
-                    
-                    # Ensure new position is within bounds
-                    new_i = np.clip(new_i, 0, rows - 1)
-                    new_j = np.clip(new_j, 0, cols - 1)
-                    
-                    # Assign the pixel value to the new location
-                    randomized_image[new_i, new_j] = image[i, j]
-            
-            return randomized_image
-
 ########## Controller specific functions
 
 def getBodyVel(sim,COM):

@@ -167,130 +167,117 @@ client.step()
 reset = getReset()
 print(reset)
 if eval_log == True:
-    log_vars = {
-        'time' : [],
-        'pose_X' : [],
-        'pose_Y' : [],
-        'linear_v' : [],
+    blur = {
+        'kernal' : [3, 15, 25, 35, 45],
+        'sigma' : [0.001, 5, 15, 35, 55]
     }
 else:
     reset = [reset[0]]
-    log_vars = {
-        'time' : [],
-        'pose_X' : [],
-        'pose_Y' : [],
-        'linear_v' : [],
+    blur = {
+        'kernal' : [3],
+        'sigma' : [0.001]
     }
     
-
-for loc_counter, location in enumerate(reset):
-    print(location)
-    
-    #reset location (for a sequence of 10 location)
-    sim.stopSimulation()
-    while sim.getSimulationState() != sim.simulation_stopped:
-        time.sleep(0.1)
-    sim.setStepping(True)
-    sim.startSimulation() 
-    sim.setObjectPose(BodyFOR, location, sim.handle_world)
-      
-
-    ######### PD Controller initializtions ############
-    sim_time = []
-    error_old = 0
-
-    ########### control loop ###########
-
-
-    while (t:= sim.getSimulationTime()) < 30:
+for sigma_val, kernal_val in zip(blur['sigma'], blur['kernal']):  
+    for loc_counter, location in enumerate(reset):
+        print(location)
         
-        img, resX, resY = sim.getVisionSensorCharImage(visionSensorHandle)
-        im_bw = process_img(img)
-        im_bw = cv2.bitwise_not(im_bw)
-        cv2.imshow('bw image',im_bw)
-        cv2.waitKey(1)
-
-        # Define the transform
-        blur_transform = T.Compose([
-            T.ToTensor(),
-            T.GaussianBlur(kernel_size=15, sigma=100),  # fixed blur
-            T.ToPILImage()
-        ])
+        #reset location (for a sequence of 10 location)
+        sim.stopSimulation()
+        while sim.getSimulationState() != sim.simulation_stopped:
+            time.sleep(0.1)
+        sim.setStepping(True)
+        sim.startSimulation() 
+        sim.setObjectPose(BodyFOR, location, sim.handle_world)
         
-        # Apply blur
-        blurred_img_pil = blur_transform(im_bw)
 
-        # Convert back to NumPy (if needed)
-        blurred_np = np.array(blurred_img_pil)
+        ######### PD Controller initializtions ############
+        sim_time = []
+        log_vars = {
+                'time' : [],
+                'pose_X' : [],
+                'pose_Y' : [],
+                'linear_v' : [],
+            }
+        error_old = 0
 
-        # Show with OpenCV
-        cv2.imshow("Augmented Image", cv2.cvtColor(blurred_np, cv2.COLOR_RGB2BGR))
+        ########### control loop ###########
 
-        error = compute_lateral_offset_error(blurred_np)
-        error_der = (error- error_old)/0.05
-        error_old = error
-        #print(f"Lateral offset error: {error:.2f} pixels")
-        omega_cmd = -0.005*error - 0.001*error_der
 
-        v_cmd = 0.75
-        #omega_cmd = 0.0
-        #### set wheel velocities
-
-        t_a = 0.0770 # Virtual Radius
-        t_b = 0.0870 #Virtual Radius/ Virtual Trackwidth
+        while (t:= sim.getSimulationTime()) < 30:
             
-        A = np.array([[t_a,t_a],[-t_b,t_b]])
+            img, resX, resY = sim.getVisionSensorCharImage(visionSensorHandle)
+            im_bw = process_img(img)
+            im_bw = cv2.bitwise_not(im_bw)
+            cv2.imshow('bw image',im_bw)
+            cv2.waitKey(1)
 
-        velocity = np.array([v_cmd,omega_cmd])
-        phi_dots = np.matmul(inv(A),velocity) #Inverse Kinematics
-        phi_dots = phi_dots.astype(float)
-        Left = phi_dots[0].item()
-        Right = phi_dots[1].item()
+            # Define the transform
+            blur_transform = T.Compose([
+                T.ToTensor(),
+                T.GaussianBlur(kernel_size=15, sigma=100),  # fixed blur
+                T.ToPILImage()
+            ])
+            
+            # Apply blur
+            blurred_img_pil = blur_transform(im_bw)
 
-        sim.setJointTargetVelocity(fl_w, Left)
-        sim.setJointTargetVelocity(fr_w, Right)
-        sim.setJointTargetVelocity(rl_w, Left)
-        sim.setJointTargetVelocity(rr_w, Right)   
+            # Convert back to NumPy (if needed)
+            blurred_np = np.array(blurred_img_pil)
+
+            # Show with OpenCV
+            cv2.imshow("Augmented Image", cv2.cvtColor(blurred_np, cv2.COLOR_RGB2BGR))
+
+            error = compute_lateral_offset_error(blurred_np)
+            error_der = (error- error_old)/0.05
+            error_old = error
+            #print(f"Lateral offset error: {error:.2f} pixels")
+            omega_cmd = -0.005*error - 0.001*error_der
+
+            v_cmd = 0.75
+            #omega_cmd = 0.0
+            #### set wheel velocities
+
+            t_a = 0.0770 # Virtual Radius
+            t_b = 0.0870 #Virtual Radius/ Virtual Trackwidth
+                
+            A = np.array([[t_a,t_a],[-t_b,t_b]])
+
+            velocity = np.array([v_cmd,omega_cmd])
+            phi_dots = np.matmul(inv(A),velocity) #Inverse Kinematics
+            phi_dots = phi_dots.astype(float)
+            Left = phi_dots[0].item()
+            Right = phi_dots[1].item()
+
+            sim.setJointTargetVelocity(fl_w, Left)
+            sim.setJointTargetVelocity(fr_w, Right)
+            sim.setJointTargetVelocity(rl_w, Left)
+            sim.setJointTargetVelocity(rr_w, Right)   
 
 
-        linear_v = getBodyVel(sim,COM)
-        pose = sim.getObjectPose(HuskyPos, sim.handle_world)
+            linear_v = getBodyVel(sim,COM)
+            pose = sim.getObjectPose(HuskyPos, sim.handle_world)
 
-        #Log variables
-        log_vars['linear_v'].append(linear_v)
-        log_vars['pose_X'].append(pose[0])
-        log_vars['pose_Y'].append(pose[1])
-        log_vars['time'].append(t)
+            #Log variables
+            log_vars['linear_v'].append(linear_v)
+            log_vars['pose_X'].append(pose[0])
+            log_vars['pose_Y'].append(pose[1])
+            log_vars['time'].append(t)
 
-        sim_time.append(t)
-        print(t)
+            sim_time.append(t)
+            print(t)
 
-        client.step()  # triggers next simulation step
+            client.step()  # triggers next simulation step
 
-    ######### save CSV of logged vairables ################
-    #default save_path = None
-    if save_path != None:
-        import pandas as pd
+        ######### save CSV of logged vairables ################
+        #default save_path = None
+        if save_path != None:
+            import pandas as pd
 
-        df_log = pd.DataFrame(log_vars)
-        df_log.to_csv(f"{save_path}PD_GB_100_{loc_counter}.csv", index=False)
-        print(f"{loc_counter}_Log saved to csv")
+            df_log = pd.DataFrame(log_vars)
+            df_log.to_csv(f"{save_path}PDCent_k_{kernal_val}_s_{sigma_val}_{loc_counter}.csv", index=False)
+            print(f"{loc_counter}_Log saved to csv")
     
     
 sim.stopSimulation()   
 print('Program ended')
-
-'''
-        import matplotlib.pyplot as plt
-
-        plt.figure()
-        plt.plot(waypoints_meters[:, 0], waypoints_meters[:, 1], 'bo-', label="Waypoints (m)")
-        plt.xlabel("Lateral offset (m)")
-        plt.ylabel("Forward distance (m)")
-        plt.title("Waypoints in Robot Frame")
-        plt.grid(True)
-        plt.axis("equal")
-        plt.legend()
-        plt.tight_layout()
-        plt.show()
-'''
