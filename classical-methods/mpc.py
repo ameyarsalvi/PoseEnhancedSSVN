@@ -140,7 +140,7 @@ import casadi as ca
 import numpy as np
 
 def create_nmpc_solver(N, dt,
-                       Q_weights=[0.01, 0.01, 0.1],
+                       Q_weights=[0.05, 0.05, 0.1],
                        R_weights=[0.1, 0.1],
                        v_des=0.75,
                        alpha=0.9,
@@ -273,7 +273,7 @@ fr_w = sim.getObject('/frw')
 rr_w = sim.getObject('/rrw')
 rl_w = sim.getObject('/rlw')
 IMU = sim.getObject('/Accelerometer_forceSensor')
-COM = sim.getObject('/Husky/Accelerometer/Accelerometer_mass')
+COM = sim.getObject('/Husky')
 Husky_ref = sim.getObject('/Husky')
 BodyFOR = sim.getObject('/FORBody')
 HuskyPos = sim.getObject('/FORBody/Husky/ReferenceFrame')
@@ -290,241 +290,167 @@ client.step()
 ##################### Evaluation /logging check ###############
 ## via argparser, default = 0
 reset = getReset()
-print(f'Reset values are{reset}')
-print(f'shape of Reset is{len(reset)}')
+
 if eval_log == True:
-    log_vars = {
-        'time' : [],
-        'pose_X' : [],
-        'pose_Y' : [],
-        'linear_v' : [],
+    blur = {
+        'kernal' : [3, 15, 25, 35, 45],
+        'sigma' : [0.001, 5, 15, 35, 55]
     }
 else:
-    reset = reset[0]
-    log_vars = {
-        'time' : [],
-        'pose_X' : [],
-        'pose_Y' : [],
-        'linear_v' : [],
+    reset = [reset[0]]
+    blur = {
+        'kernal' : [3],
+        'sigma' : [0.001]
     }
-    
-
-for loc_counter, location in enumerate([reset]):
-    print(f'location is {location}')
-    
-    #reset location (for a sequence of 10 location)
-    sim.stopSimulation()
-    while sim.getSimulationState() != sim.simulation_stopped:
-        time.sleep(1)
-    sim.setStepping(True)
-    sim.startSimulation() 
-    print(f'world handle is {sim.handle_world}')
-    sim.setObjectPose(BodyFOR, location, sim.handle_world)
-    client.step()
-    time.sleep(1)
-    client.step()
 
 
-    sim_time = []
+for sigma_val, kernal_val in zip(blur['sigma'], blur['kernal']):  
 
-    last_valid_waypoints = None  # Store the most recent valid path
-
-    while (t := sim.getSimulationTime()) < 30:
+    for loc_counter, location in enumerate(reset):
+        print(f'location is {location}')
         
-        img, resX, resY = sim.getVisionSensorCharImage(visionSensorHandle)
-        im_bw = process_img(img)
-
-
-        # Define the transform
-        blur_transform = T.Compose([
-            T.ToTensor(),
-            T.GaussianBlur(kernel_size=3, sigma=0.001),  # fixed blur
-            T.ToPILImage()
-        ])
-        
-        # Apply blur
-        blurred_img_pil = blur_transform(im_bw)
-
-        # Convert back to NumPy (if needed)
-        blurred_np = np.array(blurred_img_pil)
-
-        # Show with OpenCV
-        cv2.imshow("Augmented Image", cv2.cvtColor(blurred_np, cv2.COLOR_RGB2BGR))
-
-
-        #im_bw = randomize_pixel_location(im_bw,0.5)
-
-        while im_bw.all() == None:
-            time.sleep(0.01)
-        cv2.imshow('bw image', im_bw)
-        #cv2.waitKey(1)
-
-        left_path, right_path, center_path, vis_img = Image2Waypoints2.fit_dual_quadratics_on_raw_image(im_bw)
-        #print(f"length of waypoints is :{len(center_path)}")
-
-        if vis_img is not None:
-            cv2.imshow("Dual Lane Fit", vis_img)
-            #cv2.waitKey(0)
-            
-        '''
-
-        H = Image2Waypoints.getHomography()
-        #print(f"H is {H}")
-        scale = 100
-        canvas_width = int(3.5 * scale)
-        canvas_height = int(5.0 * scale)
-        warped = cv2.warpPerspective(blurred_np, H, (canvas_width, canvas_height))
-        warped = cv2.bitwise_not(warped)
-        height, width = warped.shape
-
-        fitted_path, band_points = Image2Waypoints.fit_quadratic_on_raw_image(blurred_np)
-        
-
-        if fitted_path is not None:
-            waypoints_meters = Image2Waypoints.convert_pixel_path_to_waypoints_in_meters(
-                pixel_path=fitted_path,
-                warped_shape=(height, width),
-                scale=scale
-            )
-            last_valid_waypoints = waypoints_meters  # Update if valid
-        else:
-            print("[MPC Loop] Warning: fitted_path is None. Reusing last valid waypoints.")
-
-        # If no valid path has ever been found, skip this frame
-        if last_valid_waypoints is None:
-            print("[MPC Loop] No valid waypoints available. Skipping MPC step.")
-            client.step()
-            continue
-            
-        '''
-        '''
-        H_img_to_world = np.array([
-            [-9.73579876e-04,  1.32734331e-02, -1.30207058e+01],
-            [-7.23895022e-03, -4.04996106e-03,  1.87419214e+01],
-            [ 7.17262395e-04,  3.27198741e-03,  1.00000000e+00]
-        ])
-        '''
-        H_img_to_world = np.array([
-            [ 1.47455097e-02, -5.19979651e-03, -3.72375854e+00],
-            [-3.78156614e-03, -2.76291572e-02,  1.90269435e+01],
-            [-1.31813484e-03,  8.98766154e-03,  1.00000000e+00]
-        ])
-
-        if center_path is not None:
-            waypoints = Image2Waypoints2.convert_pixel_path_to_waypoints(center_path, H_img_to_world)
-            last_valid_waypoints = waypoints
-        else:
-            print("[MPC Loop] Warning: fitted_path is None. Reusing last valid waypoints.")
-
-        #Image2Waypoints2.plot_waypoints(last_valid_waypoints)
-
-        if last_valid_waypoints is None:
-            print("[MPC Loop] No valid waypoints available. Skipping MPC step.")
-            client.step()
-            continue
-
-
-        print(f"length of valid waypoints is :{len(last_valid_waypoints)}")      
-
-        # --- Step 2: Setup NMPC and Interpolate Waypoints ---
-        #solver, vars = create_nmpc_solver(N=10, dt=0.01)
-        solver, vars, lbx, ubx = create_nmpc_solver(N=10, dt=0.02)
-
-        X_ref_np = interpolate_waypoints_to_horizon(last_valid_waypoints, N=vars['N'])
-        X_ref_flat = X_ref_np.reshape((-1, 1))
-
-        x0 = np.array([0.0, 0.0, 0.0])
-        X_init = np.tile(x0.reshape(3, 1), (1, vars['N']+1))
-        U_init = np.zeros((2, vars['N']))
-        initial_guess = np.concatenate([X_init.reshape(-1, 1), U_init.reshape(-1, 1)], axis=0)
-
-        # --- Step 3: Solve NMPC and Get Control ---
-        #sol = solver(x0=initial_guess, p=X_ref_flat, lbg=0, ubg=0)
-        sol = solver(x0=initial_guess,p=X_ref_flat,lbx=lbx,ubx=ubx,lbg=0,ubg=0)
-        solution = sol['x'].full().flatten()
-        U_opt = solution[3 * (vars['N']+1):].reshape((2, vars['N']))
-        v_cmd, omega_cmd = U_opt[:, 1]
-
-        print(f"Apply: v = {v_cmd:.3f}, omega = {omega_cmd:.3f}")
-
-        # --- Convert to wheel velocities ---
-        t_a = 0.0770  # Virtual radius
-        t_b = 0.0870  # Virtual trackwidth
-        A = np.array([[t_a, t_a], [-t_b, t_b]])
-        velocity = np.array([v_cmd, omega_cmd])
-        phi_dots = np.matmul(inv(A), velocity)
-        phi_dots = phi_dots.astype(float)
-        Left = phi_dots[0].item()
-        Right = phi_dots[1].item()
-
-        sim.setJointTargetVelocity(fl_w, Left)
-        sim.setJointTargetVelocity(fr_w, Right)
-        sim.setJointTargetVelocity(rl_w, Left)
-        sim.setJointTargetVelocity(rr_w, Right)
-
-        # --- Logging ---
-        linear_v = getBodyVel(sim, COM)
-        pose = sim.getObjectPose(HuskyPos, sim.handle_world)
-        
-        log_vars['linear_v'].append(linear_v)
-        log_vars['pose_X'].append(pose[0])
-        log_vars['pose_Y'].append(pose[1])
-        log_vars['time'].append(t)
-        
-
-        sim_time.append(t)
-        print(t)
-
+        #reset location (for a sequence of 10 location)
+        sim.stopSimulation()
+        while sim.getSimulationState() != sim.simulation_stopped:
+            time.sleep(1)
+        sim.setStepping(True)
+        sim.startSimulation() 
+        sim.setObjectPose(BodyFOR, location, sim.handle_world)
         client.step()
-        '''
-        # Project reference waypoints onto image for visualization
-        ref_pts = X_ref_np[:2, :].T.astype(int)  # shape: (N+1, 2)
-        robot_pos = (int(x0[0]), int(x0[1]))  # current location
-
-        # Overlay reference path (blue)
-        for pt in ref_pts:
-            cv2.circle(warped, tuple(pt), radius=3, color=100, thickness=-1)
-
-        # Draw robot location (red)
-        cv2.circle(warped, robot_pos, radius=5, color=255, thickness=-1)
-
-        # OPTIONAL: Plot predicted trajectory (in image plane if desired)
-        predicted_X = solution[:3 * (vars['N'] + 1)].reshape((3, vars['N'] + 1))
-        pred_pts = predicted_X[:2, :].T.astype(int)
-        # for pt in pred_pts:
-        cv2.circle(warped, tuple(pt), radius=2, color=180, thickness=1)
-
-        # Display the visualized image
-        cv2.imshow("MPC Image Plane Tracking", warped)
-        '''
-        cv2.waitKey(1)
+        time.sleep(1)
+        client.step()
 
 
-    ######### save CSV of logged vairables ################
-    #default save_path = None
-    if save_path != None:
-        import pandas as pd
+        sim_time = []
+        log_vars = {
+            'time' : [],
+            'pose_X' : [],
+            'pose_Y' : [],
+            'linear_v' : [],
+        }
 
-        df_log = pd.DataFrame(log_vars)
-        df_log.to_csv(f"{save_path}MPC_GB_100_{loc_counter}.csv", index=False)
-        print(f"{loc_counter}_Log saved to csv")
+        last_valid_waypoints = None  # Store the most recent valid path
+
+        while (t := sim.getSimulationTime()) < 30:
+            
+            img, resX, resY = sim.getVisionSensorCharImage(visionSensorHandle)
+            im_bw = process_img(img)
+
+            # Define the transform
+            blur_transform = T.Compose([
+                T.ToTensor(),
+                T.GaussianBlur(kernel_size=kernal_val, sigma=sigma_val),  # fixed blur
+                T.ToPILImage()
+            ])
+            
+            # Apply blur
+            blurred_img_pil = blur_transform(im_bw)
+
+            # Convert back to NumPy (if needed)
+            blurred_np = np.array(blurred_img_pil)
+
+            # Show with OpenCV
+            cv2.imshow("Augmented Image", cv2.cvtColor(blurred_np, cv2.COLOR_RGB2BGR))
+
+
+            #im_bw = randomize_pixel_location(im_bw,0.5)
+
+            while im_bw.all() == None:
+                time.sleep(0.01)
+            cv2.imshow('bw image', im_bw)
+            #cv2.waitKey(1)
+
+            left_path, right_path, center_path, vis_img = Image2Waypoints2.fit_dual_quadratics_on_raw_image(im_bw)
+            #print(f"length of waypoints is :{len(center_path)}")
+
+            if vis_img is not None:
+                cv2.imshow("Dual Lane Fit", vis_img)
+                #cv2.waitKey(0)
+                
+            H_img_to_world = np.array([
+                [ 1.47455097e-02, -5.19979651e-03, -3.72375854e+00],
+                [-3.78156614e-03, -2.76291572e-02,  1.90269435e+01],
+                [-1.31813484e-03,  8.98766154e-03,  1.00000000e+00]
+            ])
+
+            if center_path is not None:
+                waypoints = Image2Waypoints2.convert_pixel_path_to_waypoints(center_path, H_img_to_world)
+                last_valid_waypoints = waypoints
+            else:
+                print("[MPC Loop] Warning: fitted_path is None. Reusing last valid waypoints.")
+
+            #Image2Waypoints2.plot_waypoints(last_valid_waypoints)
+
+            if last_valid_waypoints is None:
+                print("[MPC Loop] No valid waypoints available. Skipping MPC step.")
+                client.step()
+                continue
+
+
+            print(f"length of valid waypoints is :{len(last_valid_waypoints)}")      
+
+            # --- Step 2: Setup NMPC and Interpolate Waypoints ---
+            #solver, vars = create_nmpc_solver(N=10, dt=0.01)
+            solver, vars, lbx, ubx = create_nmpc_solver(N=10, dt=0.02)
+
+            X_ref_np = interpolate_waypoints_to_horizon(last_valid_waypoints, N=vars['N'])
+            X_ref_flat = X_ref_np.reshape((-1, 1))
+
+            x0 = np.array([0.0, 0.0, 0.0])
+            X_init = np.tile(x0.reshape(3, 1), (1, vars['N']+1))
+            U_init = np.zeros((2, vars['N']))
+            initial_guess = np.concatenate([X_init.reshape(-1, 1), U_init.reshape(-1, 1)], axis=0)
+
+            # --- Step 3: Solve NMPC and Get Control ---
+            #sol = solver(x0=initial_guess, p=X_ref_flat, lbg=0, ubg=0)
+            sol = solver(x0=initial_guess,p=X_ref_flat,lbx=lbx,ubx=ubx,lbg=0,ubg=0)
+            solution = sol['x'].full().flatten()
+            U_opt = solution[3 * (vars['N']+1):].reshape((2, vars['N']))
+            v_cmd, omega_cmd = U_opt[:, 1]
+
+            print(f"Apply: v = {v_cmd:.3f}, omega = {omega_cmd:.3f}")
+
+            # --- Convert to wheel velocities ---
+            t_a = 0.0770  # Virtual radius
+            t_b = 0.0870  # Virtual trackwidth
+            A = np.array([[t_a, t_a], [-t_b, t_b]])
+            velocity = np.array([v_cmd, omega_cmd])
+            phi_dots = np.matmul(inv(A), velocity)
+            phi_dots = phi_dots.astype(float)
+            Left = phi_dots[0].item()
+            Right = phi_dots[1].item()
+
+            sim.setJointTargetVelocity(fl_w, Left)
+            sim.setJointTargetVelocity(fr_w, Right)
+            sim.setJointTargetVelocity(rl_w, Left)
+            sim.setJointTargetVelocity(rr_w, Right)
+
+            # --- Logging ---
+            linear_v = getBodyVel(sim, COM)
+            pose = sim.getObjectPose(HuskyPos, sim.handle_world)
+            
+            log_vars['linear_v'].append(linear_v)
+            log_vars['pose_X'].append(pose[0])
+            log_vars['pose_Y'].append(pose[1])
+            log_vars['time'].append(t)
+            
+
+            sim_time.append(t)
+            print(t)
+
+            client.step()
+            cv2.waitKey(1)
+
+
+        ######### save CSV of logged vairables ################
+        #default save_path = None
+        if save_path != None:
+            import pandas as pd
+
+            df_log = pd.DataFrame(log_vars)
+            df_log.to_csv(f"{save_path}MPC_k_{kernal_val}_s_{sigma_val}_{loc_counter}.csv", index=False)
+            print(f"{loc_counter}_Log saved to csv")
 
 
 sim.stopSimulation()   
 print('Program ended')
-
-
-'''
-        import matplotlib.pyplot as plt
-
-        plt.figure()
-        plt.plot(waypoints_meters[:, 0], waypoints_meters[:, 1], 'bo-', label="Waypoints (m)")
-        plt.xlabel("Lateral offset (m)")
-        plt.ylabel("Forward distance (m)")
-        plt.title("Waypoints in Robot Frame")
-        plt.grid(True)
-        plt.axis("equal")
-        plt.legend()
-        plt.tight_layout()
-        plt.show()
-'''

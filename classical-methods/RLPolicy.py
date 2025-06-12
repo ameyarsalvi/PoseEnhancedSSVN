@@ -101,7 +101,7 @@ fr_w = sim.getObject('/frw')
 rr_w = sim.getObject('/rrw')
 rl_w = sim.getObject('/rlw')
 IMU = sim.getObject('/Accelerometer_forceSensor')
-COM = sim.getObject('/Husky/Accelerometer/Accelerometer_mass')
+COM = sim.getObject('/Husky')
 Husky_ref = sim.getObject('/Husky')
 BodyFOR = sim.getObject('/FORBody')
 HuskyPos = sim.getObject('/FORBody/Husky/ReferenceFrame')
@@ -126,7 +126,7 @@ if eval_log == True:
         'linear_v' : [],
     }
 else:
-    reset = reset[0]
+    reset = [reset[0]]
     log_vars = {
         'time' : [],
         'pose_X' : [],

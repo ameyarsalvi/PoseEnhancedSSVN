@@ -16,13 +16,21 @@ img_pil = Image.fromarray(img_rgb)
 
 # Define sigma values for Gaussian blur
 sigma_values = [5, 10, 30, 60, 100]
+kernal_values = [0.001, 5, 15, 35, 55]
 blurred_images = []
 
+blur = {
+        'kernal' : [3, 15, 25, 35, 45],
+        'sigma' : [0.001, 5, 15, 35, 55]
+    }
+
 # Generate and save blurred images
-for sigma in sigma_values:
+#for kernal in kernal_values:
+#    for sigma in sigma_values:
+for sigma_val, kernal_val in zip(blur['sigma'], blur['kernal']):  
     transform = T.Compose([
         T.ToTensor(),
-        T.GaussianBlur(kernel_size=15, sigma=sigma),
+        T.GaussianBlur(kernel_size=kernal_val, sigma=sigma_val),
         T.ToPILImage()
     ])
 
@@ -30,6 +38,6 @@ for sigma in sigma_values:
     blurred_images.append(np.array(blurred_img))
 
     # Save to file
-    save_path = os.path.join(save_dir, f"blur_sigma_{sigma}.png")
+    save_path = os.path.join(save_dir, f"blur_{kernal_val}_{sigma_val}.png")
     blurred_img.save(save_path)
     print(f"Saved: {save_path}")
