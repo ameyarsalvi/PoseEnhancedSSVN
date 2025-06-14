@@ -12,6 +12,7 @@ from sklearn.linear_model import RANSACRegressor
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.pipeline import make_pipeline
 from sklearn.cluster import KMeans
+from scipy.interpolate import UnivariateSpline
 
 
 class Image2Waypoints2():
@@ -96,7 +97,6 @@ class Image2Waypoints2():
 
         return left_path, right_path, center_path, vis_img
     
-
     
 
     def convert_pixel_path_to_waypoints(center_path_px, H_img_to_world):
@@ -124,7 +124,11 @@ class Image2Waypoints2():
 
         pts = center_path_px.reshape(-1, 1, 2).astype(np.float32)
         waypoints_m = cv2.perspectiveTransform(pts, H_img_to_world)
-        return waypoints_m.reshape(-1, 2)
+        waypoints_m = waypoints_m.reshape(-1, 2)
+        #print(waypoints_m)
+        # Filter based on Y > 1.5 meters
+        waypoints_m_filtered = waypoints_m[waypoints_m[:, 1] > 1.5]
+        return waypoints_m_filtered.reshape(-1, 2)
 
         
     

@@ -124,7 +124,7 @@ def pure_pursuit_control(waypoints, v_nominal=0.75, lookahead_dist=0.8):
         v_cmd : linear velocity (float)
         omega_cmd : angular velocity (float)
     """
-    '''
+    
     # Step 1: Find the lookahead point
     for i in range(len(waypoints)):
         x, y = waypoints[i]
@@ -136,14 +136,14 @@ def pure_pursuit_control(waypoints, v_nominal=0.75, lookahead_dist=0.8):
     else:
         # If no point is far enough, take the last point
         x_L, y_L = waypoints[-1]
-    '''
-    x_L, y_L = waypoints[-1]
-    print([x_L, y_L])
+    
+    #x_L, y_L = waypoints[-1]
+    #print([x_L, y_L])
     # Step 2: Compute curvature
     L_d = np.hypot(x_L, y_L)
     if L_d < 1e-6:
         return 0.0, 0.0  # robot is on the goal
-    curvature = 2.5 * x_L / (L_d ** 2)
+    curvature = 2 * x_L / (L_d ** 2)
 
     # Step 3: Compute commands
     v_cmd = v_nominal
@@ -232,7 +232,7 @@ for sigma_val, kernal_val in zip(blur['sigma'], blur['kernal']):
             # Define the transform
             blur_transform = T.Compose([
                 T.ToTensor(),
-                T.GaussianBlur(kernel_size=3, sigma=0.001),  # fixed blur
+                T.GaussianBlur(kernel_size=kernal_val, sigma=sigma_val),  # fixed blur
                 T.ToPILImage()
             ])
             
@@ -259,11 +259,18 @@ for sigma_val, kernal_val in zip(blur['sigma'], blur['kernal']):
             if vis_img is not None:
                 cv2.imshow("Dual Lane Fit", vis_img)
                 #cv2.waitKey(0)
-                
+            '''   
             H_img_to_world = np.array([
                 [ 1.47455097e-02, -5.19979651e-03, -3.72375854e+00],
                 [-3.78156614e-03, -2.76291572e-02,  1.90269435e+01],
                 [-1.31813484e-03,  8.98766154e-03,  1.00000000e+00]
+            ])
+            '''
+
+            H_img_to_world = np.array([
+                [ 1.04660635e-02,  2.54905363e-03, -1.87768491e+00],
+                [-3.84114181e-04, -1.30146589e-02,  4.17121481e+00],
+                [-1.13487030e-03,  1.14988151e-02,  1.00000000e+00]
             ])
 
             if center_path is not None:
@@ -272,7 +279,8 @@ for sigma_val, kernal_val in zip(blur['sigma'], blur['kernal']):
             else:
                 print("[MPC Loop] Warning: fitted_path is None. Reusing last valid waypoints.")
 
-            #Image2Waypoints2.plot_waypoints(last_valid_waypoints)
+            #Image2Waypoints2.plot_waypoints(waypoints)
+            #print(waypoints)
 
             if last_valid_waypoints is None:
                 print("[MPC Loop] No valid waypoints available. Skipping MPC step.")
@@ -285,7 +293,7 @@ for sigma_val, kernal_val in zip(blur['sigma'], blur['kernal']):
             ####
 
             if last_valid_waypoints is not None:
-                v_cmd, omega_cmd = pure_pursuit_control(last_valid_waypoints, v_nominal=0.75, lookahead_dist=5)
+                v_cmd, omega_cmd = pure_pursuit_control(last_valid_waypoints, v_nominal=0.75, lookahead_dist=1.75)
 
 
 

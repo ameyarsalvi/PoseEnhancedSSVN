@@ -215,7 +215,7 @@ for sigma_val, kernal_val in zip(blur['sigma'], blur['kernal']):
             # Define the transform
             blur_transform = T.Compose([
                 T.ToTensor(),
-                T.GaussianBlur(kernel_size=15, sigma=100),  # fixed blur
+                T.GaussianBlur(kernel_size=kernal_val, sigma=sigma_val),  # fixed blur
                 T.ToPILImage()
             ])
             

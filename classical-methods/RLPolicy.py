@@ -25,10 +25,12 @@ import os
 
 import argparse
 parser = argparse.ArgumentParser(description='Evaluation Logging Arguments')
+parser.add_argument('--policy', type=str, default= 'bslnPEVN', help='Should evaluation and logging be enabled')
 parser.add_argument('--eval_log', type=bool, default= False, help='Should evaluation and logging be enabled')
 parser.add_argument('--save_path', type=str, default= None, help='Directory to log evaluations')
 
 args = parser.parse_args()
+policy = args.policy
 eval_log = args.eval_log
 save_path = args.save_path
 
@@ -84,7 +86,7 @@ def process_img(img):
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # Load model with feature extractor
-model = PPO.load("/home/asalvi/Downloads/bslnPEVN.zip", device= 'cuda')
+model = PPO.load(f"/home/asalvi/Downloads/{policy}.zip", device= 'cuda')
 ## Variable initialization
 
 
@@ -131,7 +133,7 @@ else:
     }
     
 for sigma_val, kernal_val in zip(blur['sigma'], blur['kernal']):  
-    for loc_counter, location in enumerate([reset]):
+    for loc_counter, location in enumerate(reset):
         print(f'location is {location}')
         
         #reset location (for a sequence of 10 location)
@@ -146,8 +148,8 @@ for sigma_val, kernal_val in zip(blur['sigma'], blur['kernal']):
         time.sleep(1)
         client.step()
 
-        save_dir = "/home/asalvi/raw_imgs/"
-        os.makedirs(save_dir, exist_ok=True)
+        #save_dir = "/home/asalvi/raw_imgs/"
+        #os.makedirs(save_dir, exist_ok=True)
 
         frame_count = 0
 
@@ -165,19 +167,19 @@ for sigma_val, kernal_val in zip(blur['sigma'], blur['kernal']):
 
             im_bw_save = cv2.bitwise_not(im_bw)
 
-            if im_bw is not None:
+            #if im_bw is not None:
             # Save image
-                filename = os.path.join(save_dir, f"frame_{frame_count:04d}.png")
-                cv2.imwrite(filename, im_bw_save)
-                print(f"Saved {filename}")
-                frame_count += 1
+            #    filename = os.path.join(save_dir, f"frame_{frame_count:04d}.png")
+            #    cv2.imwrite(filename, im_bw_save)
+            #    print(f"Saved {filename}")
+            #    frame_count += 1
 
 
 
             # Define the transform
             blur_transform = T.Compose([
                 T.ToTensor(),
-                T.GaussianBlur(kernel_size=15, sigma=100),  # fixed blur
+                T.GaussianBlur(kernel_size=kernal_val, sigma=sigma_val),  # fixed blur
                 T.ToPILImage()
             ])
             
@@ -247,7 +249,7 @@ for sigma_val, kernal_val in zip(blur['sigma'], blur['kernal']):
             import pandas as pd
 
             df_log = pd.DataFrame(log_vars)
-            df_log.to_csv(f"{save_path}RLPEVN_k_{kernal_val}_s_{sigma_val}_{loc_counter}.csv", index=False)
+            df_log.to_csv(f"{save_path}RL_{policy}_k_{kernal_val}_s_{sigma_val}_{loc_counter}.csv", index=False)
             print(f"{loc_counter}_Log saved to csv")
 
 
