@@ -115,7 +115,7 @@ import casadi as ca
 import numpy as np
 
 def create_nmpc_solver(N, dt,
-                       Q_weights=[0.05, 0.05, 0.1],
+                       Q_weights=[0.1, 0.1, 0.5],
                        R_weights=[0.1, 0.1],
                        v_des=0.75,
                        alpha=0.9,
@@ -341,11 +341,18 @@ for sigma_val, kernal_val in zip(blur['sigma'], blur['kernal']):
             if vis_img is not None:
                 cv2.imshow("Dual Lane Fit", vis_img)
                 #cv2.waitKey(0)
-                
+
+            '''    
             H_img_to_world = np.array([
                 [ 1.47455097e-02, -5.19979651e-03, -3.72375854e+00],
                 [-3.78156614e-03, -2.76291572e-02,  1.90269435e+01],
                 [-1.31813484e-03,  8.98766154e-03,  1.00000000e+00]
+            ])
+            '''
+            H_img_to_world = np.array([
+                [ 1.04660635e-02,  2.54905363e-03, -1.87768491e+00],
+                [-3.84114181e-04, -1.30146589e-02,  4.17121481e+00],
+                [-1.13487030e-03,  1.14988151e-02,  1.00000000e+00]
             ])
 
             if center_path is not None:
