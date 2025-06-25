@@ -11,7 +11,6 @@ import matplotlib.pyplot as plt
 from numpy import savetxt
 from numpy.linalg import inv
 #from matplotlib.animation import FuncAnimation
-from Image2Waypoints import Image2Waypoints
 from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 import torch
 import gymnasium as gym

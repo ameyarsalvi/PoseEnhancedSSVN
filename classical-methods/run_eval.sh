@@ -14,5 +14,3 @@ sleep 60
 
 python3 RLPolicy.py --policy bslnPEVN --eval_log True --save_path "/home/asalvi/code_workspace/Husky_CS_SB3/Evaluation/EvalDump/classical_methods/run3/rl_pevn/"
 sleep 60
-
-python3 RLPolicy.py --policy bslnPEVN --eval_log True --save_path "/home/asalvi/code_workspace/Husky_CS_SB3/Evaluation/EvalDump/vis_scenes/cones/"

@@ -10,7 +10,6 @@ import cv2
 import matplotlib.pyplot as plt
 from numpy import savetxt
 from numpy.linalg import inv
-from Image2Waypoints import Image2Waypoints
 from Image2Waypoints2 import Image2Waypoints2
 from coppeliasim_zmqremoteapi_client import RemoteAPIClient
 from scipy.spatial.transform import Rotation
