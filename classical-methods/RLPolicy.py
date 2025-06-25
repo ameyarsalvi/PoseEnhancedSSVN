@@ -122,8 +122,10 @@ print(f'Reset values are{reset}')
 print(f'shape of Reset is{len(reset)}')
 if eval_log == True:
     blur = {
-        'kernal' : [3, 15, 25, 35, 45],
-        'sigma' : [0.001, 5, 15, 35, 55]
+        #'kernal' : [3, 15, 25, 35, 45],
+        #'sigma' : [0.001, 5, 15, 35, 55]
+        'kernal' : [3],
+        'sigma' : [0.001]
     }
 else:
     reset = [reset[0]]
@@ -148,8 +150,8 @@ for sigma_val, kernal_val in zip(blur['sigma'], blur['kernal']):
         time.sleep(1)
         client.step()
 
-        #save_dir = "/home/asalvi/raw_imgs/"
-        #os.makedirs(save_dir, exist_ok=True)
+        save_dir = "/home/asalvi/raw_vis_imgs/cylinders/"
+        os.makedirs(save_dir, exist_ok=True)
 
         frame_count = 0
 
@@ -160,19 +162,19 @@ for sigma_val, kernal_val in zip(blur['sigma'], blur['kernal']):
                 'pose_Y' : [],
                 'linear_v' : [],
             }
-        while (t:= sim.getSimulationTime()) < 30:
+        while (t:= sim.getSimulationTime()) < 60:
             
             img, resX, resY = sim.getVisionSensorCharImage(visionSensorHandle)
             im_bw = process_img(img)
 
             im_bw_save = cv2.bitwise_not(im_bw)
 
-            #if im_bw is not None:
+            if im_bw is not None:
             # Save image
-            #    filename = os.path.join(save_dir, f"frame_{frame_count:04d}.png")
-            #    cv2.imwrite(filename, im_bw_save)
-            #    print(f"Saved {filename}")
-            #    frame_count += 1
+                filename = os.path.join(save_dir, f"frame_{loc_counter}_{frame_count:04d}.png")
+                cv2.imwrite(filename, im_bw_save)
+                print(f"Saved {filename}")
+                frame_count += 1
 
 
 

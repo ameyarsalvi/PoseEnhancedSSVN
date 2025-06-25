@@ -115,8 +115,8 @@ import casadi as ca
 import numpy as np
 
 def create_nmpc_solver(N, dt,
-                       Q_weights=[0.1, 0.1, 0.5],
-                       R_weights=[0.1, 0.1],
+                       Q_weights=[0.9, 0.9, 0.1],
+                       R_weights=[0.01, 0.01],
                        v_des=0.75,
                        alpha=0.9,
                        v_bounds=(0.0, 1.0),
@@ -268,8 +268,10 @@ reset = getReset()
 
 if eval_log == True:
     blur = {
-        'kernal' : [3, 15, 25, 35, 45],
-        'sigma' : [0.001, 5, 15, 35, 55]
+        #'kernal' : [3, 15, 25, 35, 45],
+        #'sigma' : [0.001, 5, 15, 35, 55]
+        'kernal' : [3],
+        'sigma' : [0.001]
     }
 else:
     reset = [reset[0]]
@@ -373,7 +375,7 @@ for sigma_val, kernal_val in zip(blur['sigma'], blur['kernal']):
 
             # --- Step 2: Setup NMPC and Interpolate Waypoints ---
             #solver, vars = create_nmpc_solver(N=10, dt=0.01)
-            solver, vars, lbx, ubx = create_nmpc_solver(N=10, dt=0.02)
+            solver, vars, lbx, ubx = create_nmpc_solver(N=10, dt=0.1)
 
             X_ref_np = interpolate_waypoints_to_horizon(last_valid_waypoints, N=vars['N'])
             X_ref_flat = X_ref_np.reshape((-1, 1))
@@ -388,7 +390,7 @@ for sigma_val, kernal_val in zip(blur['sigma'], blur['kernal']):
             sol = solver(x0=initial_guess,p=X_ref_flat,lbx=lbx,ubx=ubx,lbg=0,ubg=0)
             solution = sol['x'].full().flatten()
             U_opt = solution[3 * (vars['N']+1):].reshape((2, vars['N']))
-            v_cmd, omega_cmd = U_opt[:, 1]
+            v_cmd, omega_cmd = U_opt[:, 0]
 
             print(f"Apply: v = {v_cmd:.3f}, omega = {omega_cmd:.3f}")
 

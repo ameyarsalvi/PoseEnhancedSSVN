@@ -186,8 +186,10 @@ print(f'shape of Reset is{len(reset)}')
 
 if eval_log == True:
     blur = {
-        'kernal' : [3, 15, 25, 35, 45],
-        'sigma' : [0.001, 5, 15, 35, 55]
+        #'kernal' : [3, 15, 25, 35, 45],
+        #'sigma' : [0.001, 5, 15, 35, 55]
+        'kernal' : [3],
+        'sigma' : [0.001]
     }
 else:
     reset = [reset[0]]
@@ -279,7 +281,7 @@ for sigma_val, kernal_val in zip(blur['sigma'], blur['kernal']):
             else:
                 print("[MPC Loop] Warning: fitted_path is None. Reusing last valid waypoints.")
 
-            #Image2Waypoints2.plot_waypoints(waypoints)
+            Image2Waypoints2.plot_waypoints(waypoints)
             #print(waypoints)
 
             if last_valid_waypoints is None:
@@ -293,7 +295,7 @@ for sigma_val, kernal_val in zip(blur['sigma'], blur['kernal']):
             ####
 
             if last_valid_waypoints is not None:
-                v_cmd, omega_cmd = pure_pursuit_control(last_valid_waypoints, v_nominal=0.75, lookahead_dist=1.75)
+                v_cmd, omega_cmd = pure_pursuit_control(last_valid_waypoints, v_nominal=0.75, lookahead_dist=1.5)
 
 
 

@@ -168,8 +168,10 @@ reset = getReset()
 print(reset)
 if eval_log == True:
     blur = {
-        'kernal' : [3, 15, 25, 35, 45],
-        'sigma' : [0.001, 5, 15, 35, 55]
+        #'kernal' : [3, 15, 25, 35, 45],
+        #'sigma' : [0.001, 5, 15, 35, 55]
+        'kernal' : [3],
+        'sigma' : [0.001]
     }
 else:
     reset = [reset[0]]
