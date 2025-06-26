@@ -1,9 +1,9 @@
 # Pose Enhanced Learning for Skid-steered visual navigation
 
 <p align="center">
-  <img src="readme_figures/masthead_gif.gif" width="600px"/>
+  <img src="readme_figures/masthead_gif.gif" width="800px"/>
   <br>
-  <img src="readme_figures/LatVisSerOverview.jpg" width="600px"/>
+  <img src="readme_figures/LatVisSerOverview.jpg" width="800px"/>
 </p>
 
 ## Installations
