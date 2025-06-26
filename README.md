@@ -1,7 +1,10 @@
 # Pose Enhanced Learning for Skid-steered visual navigation
 
-![Alt text](readme_figures/masthead_gif.gif)
-![Alt text](readme_figures/LatVisSerOverview.jpg)
+<p align="center">
+  <img src="readme_figures/masthead_gif.gif" width="600px"/>
+  <br>
+  <img src="readme_figures/LatVisSerOverview.jpg" width="600px"/>
+</p>
 
 ## Installations
 1. CoppeliaSim Robotics Simulator
